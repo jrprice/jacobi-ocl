@@ -5,30 +5,34 @@ import numpy
 import pyopencl as CL
 import time
 
+# Command-line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-n', '--norder', type=int, default=256)
 parser.add_argument('-i', '--iterations', type=int, default=1000)
 parser.add_argument('-c', '--config', default='')
 args = parser.parse_args()
 
-if args.config:
-    # Load config from JSON file
-    with open(args.config) as config_file:
-        config = json.load(config_file)
-else:
-    # Default configuration
-    config = dict()
-    config['wgsize'] = 64
+# Default configuration
+config = dict()
+config['wgsize'] = 64
+config['kernel'] = 'row_per_wi'
 
+# Load config from JSON file
+if args.config:
+    with open(args.config) as config_file:
+        config.update(json.load(config_file))
+
+# Print configuration
 SEPARATOR = '--------------------------------'
 print SEPARATOR
 print 'MATRIX     = %dx%d ' % (args.norder,args.norder)
 print 'ITERATIONS = %d' % args.iterations
 print SEPARATOR
 print 'Work-group size = ' + str(config['wgsize'])
+print 'Kernel type     = ' + config['kernel']
 print SEPARATOR
 
-# Validate configuration
+# Ensure work-group size is valid
 if args.norder % config['wgsize']:
     print 'Invalid wgsize value (must divide matrix order)'
     exit(1)
@@ -38,11 +42,11 @@ context = CL.create_some_context()
 print 'Using \'' + context.devices[0].name + '\''
 queue   = CL.CommandQueue(context)
 program = CL.Program(context, open('kernel.cl').read()).build()
-kernel  = program.jacobi
 
 # Create buffers
-vectorsize = args.norder*numpy.dtype(numpy.float64).itemsize
-matrixsize = args.norder*vectorsize
+typesize   = numpy.dtype(numpy.float64).itemsize
+vectorsize = args.norder*typesize
+matrixsize = args.norder*args.norder*typesize
 d_A     = CL.Buffer(context, CL.mem_flags.READ_ONLY,  size=matrixsize)
 d_b     = CL.Buffer(context, CL.mem_flags.READ_ONLY,  size=vectorsize)
 d_x0    = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=vectorsize)
@@ -61,18 +65,28 @@ CL.enqueue_copy(queue, d_A, h_A)
 CL.enqueue_copy(queue, d_b, h_b)
 CL.enqueue_copy(queue, d_xold, h_x)
 
-local_size  = (config['wgsize'],)
-global_size = (args.norder,)
+# Select kernel and global size
+local_size = (config['wgsize'],)
+if config['kernel'] == 'row_per_wi':
+    global_size = (args.norder,)
+    kernel = program.jacobi_row_per_wi
+elif config['kernel'] == 'row_per_wg':
+    global_size = (args.norder*local_size[0],)
+    kernel = program.jacobi_row_per_wg
+    kernel.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
+else:
+    print 'Invalid kernel type'
+    exit(1)
 
-kernel.set_arg(0, d_A)
-kernel.set_arg(1, d_b)
-kernel.set_arg(4, numpy.uint32(args.norder))
+kernel.set_arg(0, numpy.uint32(args.norder))
+kernel.set_arg(3, d_A)
+kernel.set_arg(4, d_b)
 
 # Run Jacobi iterations
 start = time.time()
 for i in range(args.iterations):
-    kernel.set_arg(2, d_xold)
-    kernel.set_arg(3, d_xnew)
+    kernel.set_arg(1, d_xold)
+    kernel.set_arg(2, d_xnew)
     CL.enqueue_nd_range_kernel(queue, kernel, global_size, local_size)
 
     d_xold,d_xnew = d_xnew,d_xold
