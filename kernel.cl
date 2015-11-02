@@ -20,7 +20,7 @@ kernel void jacobi_row_per_wi(const unsigned N,
                               global double *xold,
                               global double *xnew,
                               global double *A,
-                              global double *b)
+                              ADDRSPACE_B double *b)
 {
   size_t row = get_global_id(0);
 
@@ -36,7 +36,7 @@ kernel void jacobi_row_per_wg(const unsigned N,
                               global double *xold,
                               global double *xnew,
                               global double *A,
-                              global double *b,
+                              ADDRSPACE_B double *b,
                               local  double *scratch)
 {
   size_t row = get_group_id(0);

@@ -18,6 +18,7 @@ config['wgsize']       = 64
 config['kernel']       = 'row_per_wi'
 config['conditional']  = 'branch'
 config['fmad']         = 'op'
+config['addrspace_b']  = 'global'
 config['relaxed_math'] = False
 config['use_mad24']    = False
 
@@ -36,6 +37,7 @@ print 'Work-group size = ' + str(config['wgsize'])
 print 'Kernel type     = ' + config['kernel']
 print 'Conditional     = ' + config['conditional']
 print 'fmad            = ' + config['fmad']
+print 'b address space = ' + config['addrspace_b']
 print 'Relaxed math    = ' + str(config['relaxed_math'])
 print 'Use mad24       = ' + str(config['use_mad24'])
 print SEPARATOR
@@ -54,6 +56,10 @@ print 'Using \'' + context.devices[0].name + '\''
 build_options  = ''
 build_options += '-DUSE_MAD24=' + str(1 if config['use_mad24'] else 0)
 build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
+if not config['addrspace_b'] in ['global', 'constant']:
+    print 'Invalid value for addrspace_b (must be \'global\' or \'constant\')'
+    exit(1)
+build_options += ' -DADDRSPACE_B=' + config['addrspace_b']
 if config['conditional'] == 'mask':
     build_options += ' -DMASK=1'
 elif config['conditional'] != 'branch':
