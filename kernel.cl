@@ -4,6 +4,14 @@
 #define INDEX(col,row,N) (col + row*N)
 #endif
 
+#if PREDICATE
+#define CONDITIONAL_ACCUMULATE(condition, accumulator, expression) \
+  accumulator += (expression) * (condition)
+#else
+#define CONDITIONAL_ACCUMULATE(condition, accumulator, expression) \
+  if (condition) accumulator += expression
+#endif
+
 kernel void jacobi_row_per_wi(const unsigned N,
                               global double *xold,
                               global double *xnew,
@@ -15,8 +23,7 @@ kernel void jacobi_row_per_wi(const unsigned N,
   double tmp = 0.0;
   for (unsigned col = 0; col < N; col++)
   {
-    if (row != col)
-      tmp += A[INDEX(col,row,N)] * xold[col];
+    CONDITIONAL_ACCUMULATE(row != col, tmp, A[INDEX(col,row,N)] * xold[col]);
   }
   xnew[row] = (b[row] - tmp) / A[INDEX(row,row,N)];
 }
@@ -35,8 +42,7 @@ kernel void jacobi_row_per_wg(const unsigned N,
   double tmp = 0.0;
   for (unsigned col = lid; col < N; col+=lsz)
   {
-    if (row != col)
-      tmp += A[INDEX(col,row,N)] * xold[col];
+    CONDITIONAL_ACCUMULATE(row != col, tmp, A[INDEX(col,row,N)] * xold[col]);
   }
 
   scratch[lid] = tmp;
