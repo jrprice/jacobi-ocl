@@ -14,8 +14,9 @@ args = parser.parse_args()
 
 # Default configuration
 config = dict()
-config['wgsize'] = 64
-config['kernel'] = 'row_per_wi'
+config['wgsize']    = 64
+config['kernel']    = 'row_per_wi'
+config['use_mad24'] = False
 
 # Load config from JSON file
 if args.config:
@@ -30,6 +31,7 @@ print 'ITERATIONS = %d' % args.iterations
 print SEPARATOR
 print 'Work-group size = ' + str(config['wgsize'])
 print 'Kernel type     = ' + config['kernel']
+print 'Use mad24       = ' + str(config['use_mad24'])
 print SEPARATOR
 
 # Ensure work-group size is valid
@@ -39,9 +41,13 @@ if args.norder % config['wgsize']:
 
 # Initialize OpenCL objects
 context = CL.create_some_context()
-print 'Using \'' + context.devices[0].name + '\''
 queue   = CL.CommandQueue(context)
-program = CL.Program(context, open('kernel.cl').read()).build()
+print 'Using \'' + context.devices[0].name + '\''
+
+# Create and build program
+build_options  = ''
+build_options += '-DUSE_MAD24=' + str(1 if config['use_mad24'] else 0)
+program = CL.Program(context, open('kernel.cl').read()).build(build_options)
 
 # Create buffers
 typesize   = numpy.dtype(numpy.float64).itemsize

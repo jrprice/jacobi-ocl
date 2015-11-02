@@ -1,3 +1,9 @@
+#if USE_MAD24
+#define INDEX(col,row,N) mad24(row, N, col)
+#else
+#define INDEX(col,row,N) (col + row*N)
+#endif
+
 kernel void jacobi_row_per_wi(const unsigned N,
                               global double *xold,
                               global double *xnew,
@@ -10,9 +16,9 @@ kernel void jacobi_row_per_wi(const unsigned N,
   for (unsigned col = 0; col < N; col++)
   {
     if (row != col)
-      tmp += A[row*N + col] * xold[col];
+      tmp += A[INDEX(col,row,N)] * xold[col];
   }
-  xnew[row] = (b[row] - tmp) / A[row*N + row];
+  xnew[row] = (b[row] - tmp) / A[INDEX(row,row,N)];
 }
 
 kernel void jacobi_row_per_wg(const unsigned N,
@@ -30,7 +36,7 @@ kernel void jacobi_row_per_wg(const unsigned N,
   for (unsigned col = lid; col < N; col+=lsz)
   {
     if (row != col)
-      tmp += A[row*N + col] * xold[col];
+      tmp += A[INDEX(col,row,N)] * xold[col];
   }
 
   scratch[lid] = tmp;
@@ -41,5 +47,5 @@ kernel void jacobi_row_per_wg(const unsigned N,
       scratch[lid] += scratch[lid + offset];
     barrier(CLK_LOCAL_MEM_FENCE);
   }
-  xnew[row] = (b[row] - scratch[0]) / A[row*N + row];
+  xnew[row] = (b[row] - scratch[0]) / A[INDEX(row,row,N)];
 }
