@@ -17,6 +17,7 @@ config = dict()
 config['wgsize']       = 64
 config['kernel']       = 'row_per_wi'
 config['conditional']  = 'branch'
+config['fmad']         = 'op'
 config['relaxed_math'] = False
 config['use_mad24']    = False
 
@@ -34,6 +35,7 @@ print SEPARATOR
 print 'Work-group size = ' + str(config['wgsize'])
 print 'Kernel type     = ' + config['kernel']
 print 'Conditional     = ' + config['conditional']
+print 'fmad            = ' + config['fmad']
 print 'Relaxed math    = ' + str(config['relaxed_math'])
 print 'Use mad24       = ' + str(config['use_mad24'])
 print SEPARATOR
@@ -56,6 +58,15 @@ if config['conditional'] == 'predicate':
     build_options += ' -DPREDICATE=1'
 elif config['conditional'] != 'branch':
     print 'Invalid conditional value (must be \'branch\' or \'predicate\')'
+    exit(1)
+if config['fmad'] == 'op':
+    build_options += ' -DFMAD=FMAD_OP'
+elif config['fmad'] == 'fma':
+    build_options += ' -DFMAD=FMAD_FMA'
+elif config['fmad'] == 'mad':
+    build_options += ' -DFMAD=FMAD_MAD'
+else:
+    print 'Invalid fmad value (must be \'op\' or \'fma\' or \'mad\')'
     exit(1)
 print build_options
 program = CL.Program(context, open('kernel.cl').read()).build(build_options)

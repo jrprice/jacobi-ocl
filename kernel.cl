@@ -4,12 +4,16 @@
 #define INDEX(col,row,N) (col + row*N)
 #endif
 
+#define FMAD_OP(x, y, z) (x*y + z)
+#define FMAD_FMA(x, y, z) fma(x, y, z)
+#define FMAD_MAD(x, y, z) mad(x, y, z)
+
 #if PREDICATE
-#define CONDITIONAL_ACCUMULATE(condition, accumulator, expression) \
-  accumulator += (expression) * (condition)
+#define CONDITIONAL_ACCUMULATE(condition, accumulator, a, b) \
+  accumulator = FMAD(a, b*(condition), accumulator)
 #else
-#define CONDITIONAL_ACCUMULATE(condition, accumulator, expression) \
-  if (condition) accumulator += expression
+#define CONDITIONAL_ACCUMULATE(condition, accumulator, a, b) \
+  if (condition) accumulator = FMAD(a, b, accumulator)
 #endif
 
 kernel void jacobi_row_per_wi(const unsigned N,
@@ -23,7 +27,7 @@ kernel void jacobi_row_per_wi(const unsigned N,
   double tmp = 0.0;
   for (unsigned col = 0; col < N; col++)
   {
-    CONDITIONAL_ACCUMULATE(row != col, tmp, A[INDEX(col,row,N)] * xold[col]);
+    CONDITIONAL_ACCUMULATE(row != col, tmp, A[INDEX(col,row,N)], xold[col]);
   }
   xnew[row] = (b[row] - tmp) / A[INDEX(row,row,N)];
 }
@@ -42,7 +46,7 @@ kernel void jacobi_row_per_wg(const unsigned N,
   double tmp = 0.0;
   for (unsigned col = lid; col < N; col+=lsz)
   {
-    CONDITIONAL_ACCUMULATE(row != col, tmp, A[INDEX(col,row,N)] * xold[col]);
+    CONDITIONAL_ACCUMULATE(row != col, tmp, A[INDEX(col,row,N)], xold[col]);
   }
 
   scratch[lid] = tmp;
