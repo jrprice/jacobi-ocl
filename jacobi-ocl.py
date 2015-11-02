@@ -59,7 +59,7 @@ build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
 if not config['addrspace_b'] in ['global', 'constant']:
     print 'Invalid value for addrspace_b (must be \'global\' or \'constant\')'
     exit(1)
-build_options += ' -DADDRSPACE_B=' + config['addrspace_b']
+build_options += ' -DADDRSPACE_B=' + str(config['addrspace_b'])
 if config['conditional'] == 'mask':
     build_options += ' -DMASK=1'
 elif config['conditional'] != 'branch':
