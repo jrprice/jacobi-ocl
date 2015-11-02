@@ -14,10 +14,11 @@ args = parser.parse_args()
 
 # Default configuration
 config = dict()
-config['wgsize']      = 64
-config['kernel']      = 'row_per_wi'
-config['conditional'] = 'branch'
-config['use_mad24']   = False
+config['wgsize']       = 64
+config['kernel']       = 'row_per_wi'
+config['conditional']  = 'branch'
+config['relaxed_math'] = False
+config['use_mad24']    = False
 
 # Load config from JSON file
 if args.config:
@@ -33,6 +34,7 @@ print SEPARATOR
 print 'Work-group size = ' + str(config['wgsize'])
 print 'Kernel type     = ' + config['kernel']
 print 'Conditional     = ' + config['conditional']
+print 'Relaxed math    = ' + str(config['relaxed_math'])
 print 'Use mad24       = ' + str(config['use_mad24'])
 print SEPARATOR
 
@@ -49,11 +51,13 @@ print 'Using \'' + context.devices[0].name + '\''
 # Create and build program
 build_options  = ''
 build_options += '-DUSE_MAD24=' + str(1 if config['use_mad24'] else 0)
+build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
 if config['conditional'] == 'predicate':
     build_options += ' -DPREDICATE=1'
 elif config['conditional'] != 'branch':
     print 'Invalid conditional value (must be \'branch\' or \'predicate\')'
     exit(1)
+print build_options
 program = CL.Program(context, open('kernel.cl').read()).build(build_options)
 
 # Create buffers
