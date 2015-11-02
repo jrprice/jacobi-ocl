@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-n', '--norder', type=int, default=256)
 parser.add_argument('-i', '--iterations', type=int, default=1000)
 parser.add_argument('-c', '--config', default='')
+parser.add_argument('-v', '--verbose', action='store_true')
 args = parser.parse_args()
 
 # Default configuration
@@ -74,7 +75,13 @@ elif config['fmad'] == 'mad':
 else:
     print 'Invalid fmad value (must be \'op\' or \'fma\' or \'mad\')'
     exit(1)
-print build_options
+
+if args.verbose:
+    print
+    print 'Build options:'
+    print build_options
+    print
+
 program = CL.Program(context, open('kernel.cl').read()).build(build_options)
 
 # Create buffers
