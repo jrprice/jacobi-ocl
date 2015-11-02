@@ -54,8 +54,8 @@ print 'Using \'' + context.devices[0].name + '\''
 build_options  = ''
 build_options += '-DUSE_MAD24=' + str(1 if config['use_mad24'] else 0)
 build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
-if config['conditional'] == 'predicate':
-    build_options += ' -DPREDICATE=1'
+if config['conditional'] == 'mask':
+    build_options += ' -DMASK=1'
 elif config['conditional'] != 'branch':
     print 'Invalid conditional value (must be \'branch\' or \'predicate\')'
     exit(1)

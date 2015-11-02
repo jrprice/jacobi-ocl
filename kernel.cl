@@ -8,7 +8,7 @@
 #define FMAD_FMA(x, y, z) fma(x, y, z)
 #define FMAD_MAD(x, y, z) mad(x, y, z)
 
-#if PREDICATE
+#if MASK
 #define CONDITIONAL_ACCUMULATE(condition, accumulator, a, b) \
   accumulator = FMAD(a, b*(condition), accumulator)
 #else
