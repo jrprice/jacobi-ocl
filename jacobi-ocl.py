@@ -10,6 +10,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-n', '--norder', type=int, default=256)
 parser.add_argument('-i', '--iterations', type=int, default=1000)
 parser.add_argument('-c', '--config', default='')
+parser.add_argument('-k', '--convergence-frequency', type=int, default=0)
+parser.add_argument('-t', '--convergence-tolerance', type=float, default=0.001)
 parser.add_argument('-v', '--verbose', action='store_true')
 args = parser.parse_args()
 
@@ -33,6 +35,11 @@ SEPARATOR = '--------------------------------'
 print SEPARATOR
 print 'MATRIX     = %dx%d ' % (args.norder,args.norder)
 print 'ITERATIONS = %d' % args.iterations
+if args.convergence_frequency:
+    print 'Check convergence every %d iterations (tolerance=%g)' \
+        % (args.convergence_frequency, args.convergence_tolerance)
+else:
+    print 'Convergence checking disabled'
 print SEPARATOR
 print 'Work-group size = ' + str(config['wgsize'])
 print 'Kernel type     = ' + config['kernel']
@@ -110,25 +117,45 @@ CL.enqueue_copy(queue, d_xold, h_x)
 local_size = (config['wgsize'],)
 if config['kernel'] == 'row_per_wi':
     global_size = (args.norder,)
-    kernel = program.jacobi_row_per_wi
+    jacobi      = program.jacobi_row_per_wi
+    convergence = program.convergence_row_per_wi
 elif config['kernel'] == 'row_per_wg':
     global_size = (args.norder*local_size[0],)
-    kernel = program.jacobi_row_per_wg
-    kernel.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
+    jacobi      = program.jacobi_row_per_wg
+    convergence = program.convergence_row_per_wg
+    jacobi.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
 else:
     print 'Invalid kernel type'
     exit(1)
 
-kernel.set_arg(0, numpy.uint32(args.norder))
-kernel.set_arg(3, d_A)
-kernel.set_arg(4, d_b)
+jacobi.set_arg(0, numpy.uint32(args.norder))
+jacobi.set_arg(3, d_A)
+jacobi.set_arg(4, d_b)
+
+num_groups = global_size[0] / local_size[0]
+h_err = numpy.zeros(num_groups)
+d_err = CL.Buffer(context, CL.mem_flags.WRITE_ONLY, size=num_groups*typesize)
+convergence.set_arg(0, numpy.uint32(args.norder))
+convergence.set_arg(2, d_A)
+convergence.set_arg(3, d_b)
+convergence.set_arg(4, d_err)
+convergence.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
 
 # Run Jacobi iterations
 start = time.time()
 for i in range(args.iterations):
-    kernel.set_arg(1, d_xold)
-    kernel.set_arg(2, d_xnew)
-    CL.enqueue_nd_range_kernel(queue, kernel, global_size, local_size)
+    jacobi.set_arg(1, d_xold)
+    jacobi.set_arg(2, d_xnew)
+    CL.enqueue_nd_range_kernel(queue, jacobi, global_size, local_size)
+
+    # Convergence check
+    if args.convergence_frequency and (i+1)%args.convergence_frequency == 0:
+        convergence.set_arg(1, d_xnew)
+        CL.enqueue_nd_range_kernel(queue, convergence, global_size, local_size)
+        CL.enqueue_copy(queue, h_err, d_err)
+        queue.finish()
+        if math.sqrt(numpy.sum(h_err)) < args.convergence_tolerance:
+            break
 
     d_xold,d_xnew = d_xnew,d_xold
 
@@ -136,5 +163,5 @@ CL.enqueue_copy(queue, h_x, d_xold)
 queue.finish()
 end = time.time()
 
-print 'Runtime = %.3fs' % (end-start)
-print 'Error = %f' % math.sqrt(sum([e*e for e in (h_b - numpy.dot(h_A, h_x))]))
+print 'Runtime = %.3fs (%d iterations)' % ((end-start), i+1)
+print 'Error   = %f' % math.sqrt(sum([e*e for e in (h_b-numpy.dot(h_A, h_x))]))
