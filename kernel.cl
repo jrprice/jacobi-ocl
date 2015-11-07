@@ -60,25 +60,18 @@ kernel void jacobi_row_per_wg(const unsigned N,
   xnew[row] = (b[row] - scratch[0]) / A[INDEX(row,row,N)];
 }
 
-kernel void convergence_row_per_wi(const unsigned N,
-                                   global double *x,
-                                   global double *A,
-                                   global double *b,
-                                   global double *result,
-                                   local  double *scratch)
+kernel void convergence(const unsigned N,
+                        global double *x0,
+                        global double *x1,
+                        global double *result,
+                        local  double *scratch)
 {
   size_t row = get_global_id(0);
   size_t lid = get_local_id(0);
   size_t lsz = get_local_size(0);
 
-  double tmp = 0.0;
-  for (unsigned col = 0; col < N; col++)
-  {
-    tmp += A[row*N + col] * x[col];
-  }
-
-  double err = b[row] - tmp;
-  scratch[lid] = err*err;
+  double diff = x0[row] - x1[row];
+  scratch[lid] = diff*diff;
   barrier(CLK_LOCAL_MEM_FENCE);
   for (unsigned offset = lsz/2; offset > 0; offset/=2)
   {
@@ -88,33 +81,4 @@ kernel void convergence_row_per_wi(const unsigned N,
   }
   if (lid == 0)
     result[get_group_id(0)] = scratch[0];
-}
-
-kernel void convergence_row_per_wg(const unsigned N,
-                                   global double *x,
-                                   global double *A,
-                                   global double *b,
-                                   global double *result,
-                                   local  double *scratch)
-{
-  size_t row = get_group_id(0);
-  size_t lid = get_local_id(0);
-  size_t lsz = get_local_size(0);
-
-  double tmp = 0.0;
-  for (unsigned col = lid; col < N; col+=lsz)
-  {
-    tmp += A[row*N + col] * x[col];
-  }
-
-  scratch[lid] = tmp;
-  barrier(CLK_LOCAL_MEM_FENCE);
-  for (unsigned offset = lsz/2; offset > 0; offset/=2)
-  {
-    if (lid < offset)
-      scratch[lid] += scratch[lid + offset];
-    barrier(CLK_LOCAL_MEM_FENCE);
-  }
-  if (lid == 0)
-    result[get_group_id(0)] = pow(b[row] - scratch[0], 2);
 }

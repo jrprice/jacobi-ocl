@@ -118,11 +118,9 @@ local_size = (config['wgsize'],)
 if config['kernel'] == 'row_per_wi':
     global_size = (args.norder,)
     jacobi      = program.jacobi_row_per_wi
-    convergence = program.convergence_row_per_wi
 elif config['kernel'] == 'row_per_wg':
     global_size = (args.norder*local_size[0],)
     jacobi      = program.jacobi_row_per_wg
-    convergence = program.convergence_row_per_wg
     jacobi.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
 else:
     print 'Invalid kernel type'
@@ -132,14 +130,16 @@ jacobi.set_arg(0, numpy.uint32(args.norder))
 jacobi.set_arg(3, d_A)
 jacobi.set_arg(4, d_b)
 
-num_groups = global_size[0] / local_size[0]
-h_err = numpy.zeros(num_groups)
-d_err = CL.Buffer(context, CL.mem_flags.WRITE_ONLY, size=num_groups*typesize)
+num_groups  = global_size[0] / local_size[0]
+h_err       = numpy.zeros(num_groups)
+d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
+                        size=num_groups*typesize)
+convergence = program.convergence
 convergence.set_arg(0, numpy.uint32(args.norder))
-convergence.set_arg(2, d_A)
-convergence.set_arg(3, d_b)
-convergence.set_arg(4, d_err)
-convergence.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
+convergence.set_arg(1, d_x0)
+convergence.set_arg(2, d_x1)
+convergence.set_arg(3, d_err)
+convergence.set_arg(4, CL.LocalMemory(local_size[0]*typesize))
 
 # Run Jacobi iterations
 start = time.time()
@@ -150,8 +150,8 @@ for i in range(args.iterations):
 
     # Convergence check
     if args.convergence_frequency and (i+1)%args.convergence_frequency == 0:
-        convergence.set_arg(1, d_xnew)
-        CL.enqueue_nd_range_kernel(queue, convergence, global_size, local_size)
+        CL.enqueue_nd_range_kernel(queue, convergence,
+                                   (args.norder,), local_size)
         CL.enqueue_copy(queue, h_err, d_err)
         queue.finish()
         if math.sqrt(numpy.sum(h_err)) < args.convergence_tolerance:
