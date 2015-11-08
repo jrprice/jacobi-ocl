@@ -25,6 +25,7 @@ def run(config, norder, iterations,
     print 'Conditional     = ' + config['conditional']
     print 'fmad            = ' + config['fmad']
     print 'b address space = ' + config['addrspace_b']
+    print 'Integer type    = ' + config['integer']
     print 'Relaxed math    = ' + str(config['relaxed_math'])
     print 'Use mad24       = ' + str(config['use_mad24'])
     print SEPARATOR
@@ -158,6 +159,11 @@ def generate_kernel(config, norder):
     if not config['addrspace_b'] in ['global', 'constant']:
         raise ValueError('addrspace_b', 'must be \'global\' or \'constant\'')
 
+    # Ensure integer value is valid
+    if not config['integer'] in ['uint', 'int']:
+        raise ValueError('integer', 'must be \'uint\' or \'or\'')
+    inttype = str(config['integer'])
+
     # Ensure unroll factor is valid
     cols_per_wi = norder
     if config['kernel'] == 'row_per_wg':
@@ -171,7 +177,7 @@ def generate_kernel(config, norder):
     result += 'kernel void jacobi('
 
     # Kernel arguments
-    result += '\n  const unsigned N,'
+    result += '\n  const  %s N,' % inttype
     result += '\n  global double *xold,'
     result += '\n  global double *xnew,'
     result += '\n  global double *A,'
@@ -186,13 +192,13 @@ def generate_kernel(config, norder):
 
     # Get row index
     if config['kernel'] == 'row_per_wi':
-        result += '\n  size_t row = get_global_id(0);'
+        result += '\n  %s row = get_global_id(0);' % intype
         col_start = '0'
         col_inc   = '1'
     elif config['kernel'] == 'row_per_wg':
-        result += '\n  size_t row = get_group_id(0);'
-        result += '\n  size_t lid = get_local_id(0);'
-        result += '\n  size_t lsz = get_local_size(0);'
+        result += '\n  %s row = get_group_id(0);' % inttype
+        result += '\n  %s lid = get_local_id(0);' % inttype
+        result += '\n  %s lsz = get_local_size(0);' % inttype
         col_start = 'lid'
         col_inc   = 'lsz'
     else:
@@ -202,7 +208,7 @@ def generate_kernel(config, norder):
     result += '\n\n  double tmp = 0.0;'
 
     # Loop begin
-    result += '\n  for (unsigned col = %s; col < N; )' % col_start
+    result += '\n  for (%s col = %s; col < N; )' % (inttype, col_start)
     result += '\n  {'
 
     # Loop body
@@ -222,7 +228,7 @@ def generate_kernel(config, norder):
     elif config['kernel'] == 'row_per_wg':
         result += '\n  scratch[lid] = tmp;'
         result += '\n  barrier(CLK_LOCAL_MEM_FENCE);'
-        result += '\n  for (unsigned offset = lsz/2; offset > 0; offset/=2)'
+        result += '\n  for (%s offset = lsz/2; offset > 0; offset/=2)' % inttype
         result += '\n  {'
         result += '\n    if (lid < offset)'
         result += '\n      scratch[lid] += scratch[lid + offset];'
@@ -236,20 +242,20 @@ def generate_kernel(config, norder):
 
     # Convergence checking kernel
     result += '''
-kernel void convergence(const unsigned N,
+kernel void convergence(const  uint N,
                         global double *x0,
                         global double *x1,
                         global double *result,
                         local  double *scratch)
 {
-  size_t row = get_global_id(0);
-  size_t lid = get_local_id(0);
-  size_t lsz = get_local_size(0);
+  uint row = get_global_id(0);
+  uint lid = get_local_id(0);
+  uint lsz = get_local_size(0);
 
   double diff = x0[row] - x1[row];
   scratch[lid] = diff*diff;
   barrier(CLK_LOCAL_MEM_FENCE);
-  for (unsigned offset = lsz/2; offset > 0; offset/=2)
+  for (uint offset = lsz/2; offset > 0; offset/=2)
   {
     if (lid < offset)
       scratch[lid] += scratch[lid + offset];
@@ -287,6 +293,7 @@ def main():
     config['conditional']  = 'branch'
     config['fmad']         = 'op'
     config['addrspace_b']  = 'global'
+    config['integer']      = 'uint'
     config['relaxed_math'] = False
     config['use_mad24']    = False
 
