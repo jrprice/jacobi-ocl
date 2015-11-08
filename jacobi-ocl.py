@@ -20,6 +20,7 @@ def run(config, norder, iterations,
         print 'Convergence checking disabled'
     print SEPARATOR
     print 'Work-group size = ' + str(config['wgsize'])
+    print 'Unroll factor   = ' + str(config['unroll'])
     print 'Kernel type     = ' + config['kernel']
     print 'Conditional     = ' + config['conditional']
     print 'fmad            = ' + config['fmad']
@@ -41,7 +42,7 @@ def run(config, norder, iterations,
     # Create and build program
     build_options  = ''
     build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
-    kernel_source  = generate_kernel(config)
+    kernel_source  = generate_kernel(config, norder)
     program        = CL.Program(context, kernel_source).build(build_options)
 
     # Create buffers
@@ -124,7 +125,7 @@ def run(config, norder, iterations,
     print 'Runtime = %.3fs (%d iterations)' % (runtime, i+1)
     print 'Error   = %f' % error
 
-def generate_kernel(config):
+def generate_kernel(config, norder):
 
     def gen_index(config, col, row, N):
         if config['use_mad24']:
@@ -157,6 +158,14 @@ def generate_kernel(config):
     if not config['addrspace_b'] in ['global', 'constant']:
         raise ValueError('addrspace_b', 'must be \'global\' or \'constant\'')
 
+    # Ensure unroll factor is valid
+    cols_per_wi = norder
+    if config['kernel'] == 'row_per_wg':
+        cols_per_wi /= config['wgsize']
+    if cols_per_wi % config['unroll']:
+        print 'Invalid unroll factor (must exactly divide %d)' % cols_per_wi
+        exit(1)
+
     result = ''
 
     result += 'kernel void jacobi('
@@ -178,10 +187,14 @@ def generate_kernel(config):
     # Get row index
     if config['kernel'] == 'row_per_wi':
         result += '\n  size_t row = get_global_id(0);'
+        col_start = '0'
+        col_inc   = '1'
     elif config['kernel'] == 'row_per_wg':
         result += '\n  size_t row = get_group_id(0);'
         result += '\n  size_t lid = get_local_id(0);'
         result += '\n  size_t lsz = get_local_size(0);'
+        col_start = 'lid'
+        col_inc   = 'lsz'
     else:
         raise ValueError('kernel', 'must be \'row_per_wi\' or \'row_per_wg\'')
 
@@ -189,16 +202,15 @@ def generate_kernel(config):
     result += '\n\n  double tmp = 0.0;'
 
     # Loop begin
-    if config['kernel'] == 'row_per_wi':
-        result += '\n  for (unsigned col = 0; col < N; col++)'
-    elif config['kernel'] == 'row_per_wg':
-        result += '\n  for (unsigned col = lid; col < N; col+=lsz)'
+    result += '\n  for (unsigned col = %s; col < N; )' % col_start
     result += '\n  {'
 
     # Loop body
-    A       = 'A[' + gen_index(config,'col','row','N') + ']'
-    x       = 'xold[col]'
-    result += '\n    ' + gen_cond_accum(config, 'row != col', 'tmp', A, x) + ';'
+    A          = 'A[' + gen_index(config,'col','row','N') + ']'
+    x          = 'xold[col]'
+    loop_body  = '\n    %s;' % gen_cond_accum(config, 'row != col', 'tmp', A, x)
+    loop_body += '\n    col += %s;' % col_inc
+    result += loop_body * config['unroll']
 
     # Loop end
     result += '\n  }\n'
@@ -270,6 +282,7 @@ def main():
     # Default configuration
     config = dict()
     config['wgsize']       = 64
+    config['unroll']       = 1
     config['kernel']       = 'row_per_wi'
     config['conditional']  = 'branch'
     config['fmad']         = 'op'
@@ -283,7 +296,7 @@ def main():
             config.update(json.load(config_file))
 
     if args.print_kernel:
-        print generate_kernel(config)
+        print generate_kernel(config, args.norder)
         exit(0)
 
     # Run Jacobi solver
