@@ -28,6 +28,7 @@ def run(config, norder, iterations,
     print 'Integer type    = ' + config['integer']
     print 'Relaxed math    = ' + str(config['relaxed_math'])
     print 'Use mad24       = ' + str(config['use_mad24'])
+    print 'Constant norder = ' + str(config['const_norder'])
     print SEPARATOR
 
     # Ensure work-group size is valid
@@ -43,6 +44,10 @@ def run(config, norder, iterations,
     # Create and build program
     build_options  = ''
     build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
+    if config['const_norder']:
+        build_options += ' -Dnorder=' + str(norder)
+        if config['integer'] == 'uint':
+            build_options += 'u'
     kernel_source  = generate_kernel(config, norder)
     program        = CL.Program(context, kernel_source).build(build_options)
 
@@ -70,9 +75,18 @@ def run(config, norder, iterations,
 
     # Create kernel and set invariant arguments
     jacobi      = program.jacobi
-    jacobi.set_arg(0, numpy.uint32(norder))
-    jacobi.set_arg(3, d_A)
-    jacobi.set_arg(4, d_b)
+    if not config['const_norder']:
+        jacobi.set_arg(0, numpy.uint32(norder))
+        arg_xold = 1
+    else:
+        arg_xold = 0
+    arg_xnew    = arg_xold + 1
+    arg_A       = arg_xnew + 1
+    arg_b       = arg_A    + 1
+    arg_scratch = arg_b    + 1
+
+    jacobi.set_arg(arg_A, d_A)
+    jacobi.set_arg(arg_b, d_b)
 
     # Compute global size
     local_size = (config['wgsize'],)
@@ -80,7 +94,7 @@ def run(config, norder, iterations,
         global_size = (norder,)
     elif config['kernel'] == 'row_per_wg':
         global_size = (norder*local_size[0],)
-        jacobi.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
+        jacobi.set_arg(arg_scratch, CL.LocalMemory(local_size[0]*typesize))
     else:
         print 'Invalid kernel type'
         exit(1)
@@ -90,17 +104,16 @@ def run(config, norder, iterations,
     d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
                             size=num_groups*typesize)
     convergence = program.convergence
-    convergence.set_arg(0, numpy.uint32(norder))
-    convergence.set_arg(1, d_x0)
-    convergence.set_arg(2, d_x1)
-    convergence.set_arg(3, d_err)
-    convergence.set_arg(4, CL.LocalMemory(local_size[0]*typesize))
+    convergence.set_arg(0, d_x0)
+    convergence.set_arg(1, d_x1)
+    convergence.set_arg(2, d_err)
+    convergence.set_arg(3, CL.LocalMemory(local_size[0]*typesize))
 
     # Run Jacobi solver
     start = time.time()
     for i in range(iterations):
-        jacobi.set_arg(1, d_xold)
-        jacobi.set_arg(2, d_xnew)
+        jacobi.set_arg(arg_xold, d_xold)
+        jacobi.set_arg(arg_xnew, d_xnew)
         CL.enqueue_nd_range_kernel(queue, jacobi, global_size, local_size)
 
         # Convergence check
@@ -177,7 +190,8 @@ def generate_kernel(config, norder):
     result += 'kernel void jacobi('
 
     # Kernel arguments
-    result += '\n  const  %s N,' % inttype
+    if not config['const_norder']:
+        result += '\n  const  %s norder,' % inttype
     result += '\n  global double *xold,'
     result += '\n  global double *xnew,'
     result += '\n  global double *A,'
@@ -208,11 +222,11 @@ def generate_kernel(config, norder):
     result += '\n\n  double tmp = 0.0;'
 
     # Loop begin
-    result += '\n  for (%s col = %s; col < N; )' % (inttype, col_start)
+    result += '\n  for (%s col = %s; col < norder; )' % (inttype, col_start)
     result += '\n  {'
 
     # Loop body
-    A          = 'A[' + gen_index(config,'col','row','N') + ']'
+    A          = 'A[' + gen_index(config,'col','row','norder') + ']'
     x          = 'xold[col]'
     loop_body  = '\n    %s;' % gen_cond_accum(config, 'row != col', 'tmp', A, x)
     loop_body += '\n    col += %s;' % col_inc
@@ -222,7 +236,7 @@ def generate_kernel(config, norder):
     result += '\n  }\n'
 
     # xnew = (b - tmp) / D
-    D = 'A[' + gen_index(config,'row','row','N') + ']'
+    D = 'A[' + gen_index(config,'row','row','norder') + ']'
     if config['kernel'] == 'row_per_wi':
         result += '\n  xnew[row] = (b[row] - tmp) / %s;' % D
     elif config['kernel'] == 'row_per_wg':
@@ -242,8 +256,7 @@ def generate_kernel(config, norder):
 
     # Convergence checking kernel
     result += '''
-kernel void convergence(const  uint N,
-                        global double *x0,
+kernel void convergence(global double *x0,
                         global double *x1,
                         global double *result,
                         local  double *scratch)
@@ -296,6 +309,7 @@ def main():
     config['integer']      = 'uint'
     config['relaxed_math'] = False
     config['use_mad24']    = False
+    config['const_norder'] = False
 
     # Load config from JSON file
     if args.config:
