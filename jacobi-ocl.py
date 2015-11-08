@@ -40,28 +40,9 @@ def run(config, norder, iterations,
 
     # Create and build program
     build_options  = ''
-    build_options += '-DUSE_MAD24=' + str(1 if config['use_mad24'] else 0)
     build_options += ' -cl-fast-relaxed-math' if config['relaxed_math'] else ''
-    if not config['addrspace_b'] in ['global', 'constant']:
-        print 'Invalid value for addrspace_b (must be \'global\' or \'constant\')'
-        exit(1)
-    build_options += ' -DADDRSPACE_B=' + str(config['addrspace_b'])
-    if config['conditional'] == 'mask':
-        build_options += ' -DMASK=1'
-    elif config['conditional'] != 'branch':
-        print 'Invalid conditional value (must be \'branch\' or \'predicate\')'
-        exit(1)
-    if config['fmad'] == 'op':
-        build_options += ' -DFMAD=FMAD_OP'
-    elif config['fmad'] == 'fma':
-        build_options += ' -DFMAD=FMAD_FMA'
-    elif config['fmad'] == 'mad':
-        build_options += ' -DFMAD=FMAD_MAD'
-    else:
-        print 'Invalid fmad value (must be \'op\' or \'fma\' or \'mad\')'
-        exit(1)
-
-    program = CL.Program(context, open('kernel.cl').read()).build(build_options)
+    kernel_source  = generate_kernel(config)
+    program        = CL.Program(context, kernel_source).build(build_options)
 
     # Create buffers
     typesize   = numpy.dtype(numpy.float64).itemsize
@@ -85,22 +66,22 @@ def run(config, norder, iterations,
     CL.enqueue_copy(queue, d_b, h_b)
     CL.enqueue_copy(queue, d_xold, h_x)
 
-    # Select kernel and global size
+    # Create kernel and set invariant arguments
+    jacobi      = program.jacobi
+    jacobi.set_arg(0, numpy.uint32(norder))
+    jacobi.set_arg(3, d_A)
+    jacobi.set_arg(4, d_b)
+
+    # Compute global size
     local_size = (config['wgsize'],)
     if config['kernel'] == 'row_per_wi':
         global_size = (norder,)
-        jacobi      = program.jacobi_row_per_wi
     elif config['kernel'] == 'row_per_wg':
         global_size = (norder*local_size[0],)
-        jacobi      = program.jacobi_row_per_wg
         jacobi.set_arg(5, CL.LocalMemory(local_size[0]*typesize))
     else:
         print 'Invalid kernel type'
         exit(1)
-
-    jacobi.set_arg(0, numpy.uint32(norder))
-    jacobi.set_arg(3, d_A)
-    jacobi.set_arg(4, d_b)
 
     num_groups  = global_size[0] / local_size[0]
     h_err       = numpy.zeros(num_groups)
@@ -144,12 +125,128 @@ def run(config, norder, iterations,
     print 'Error   = %f' % error
 
 def generate_kernel(config):
+
+    def gen_index(config, col, row, N):
+        if config['use_mad24']:
+            return 'mad24(%s, %s, %s)' % (row, N, col)
+        return '(%s*%s + %s)' % (row, N, col)
+
+    def gen_fmad(config, x, y, z):
+        if config['fmad'] == 'op':
+            return '(%s * %s + %s)' % (x, y, z)
+        elif config['fmad'] == 'fma':
+            return 'fma(%s, %s, %s)' % (x, y, z)
+        elif config['fmad'] == 'mad':
+            return 'mad(%s, %s, %s)' % (x, y, z)
+        else:
+            raise ValueError('fmad', 'must be \'op\' or \'fma\' or \'mad\')')
+
+    def gen_cond_accum(config, cond, acc, a, b):
+        result = ''
+        if config['conditional'] == 'branch':
+            result += 'if (%s) ' % cond
+            _b = b
+        elif config['conditional'] == 'mask':
+            _b = '%s*(%s)' % (b, cond)
+        else:
+            raise ValueError('conditional', 'must be \'branch\' or \'mask\'')
+        result += '%s = %s' % (acc, gen_fmad(config, a, _b, acc))
+        return result
+
+    # Ensure addrspace_b value is valid
+    if not config['addrspace_b'] in ['global', 'constant']:
+        raise ValueError('addrspace_b', 'must be \'global\' or \'constant\'')
+
     result = ''
 
-    result += 'kernel void jacobi(\n'
-    result += ')\n'
-    result += '{\n'
-    result += '}\n'
+    result += 'kernel void jacobi('
+
+    # Kernel arguments
+    result += '\n  const unsigned N,'
+    result += '\n  global double *xold,'
+    result += '\n  global double *xnew,'
+    result += '\n  global double *A,'
+    result += '\n  ' + str(config['addrspace_b']) + ' double *b,'
+    if config['kernel'] == 'row_per_wg':
+        result += '\n  local  double *scratch,'
+    result = result[:-1]
+    result += ')'
+
+    # Start of kernel
+    result += '\n{'
+
+    # Get row index
+    if config['kernel'] == 'row_per_wi':
+        result += '\n  size_t row = get_global_id(0);'
+    elif config['kernel'] == 'row_per_wg':
+        result += '\n  size_t row = get_group_id(0);'
+        result += '\n  size_t lid = get_local_id(0);'
+        result += '\n  size_t lsz = get_local_size(0);'
+    else:
+        raise ValueError('kernel', 'must be \'row_per_wi\' or \'row_per_wg\'')
+
+    # Initialise accumulator
+    result += '\n\n  double tmp = 0.0;'
+
+    # Loop begin
+    if config['kernel'] == 'row_per_wi':
+        result += '\n  for (unsigned col = 0; col < N; col++)'
+    elif config['kernel'] == 'row_per_wg':
+        result += '\n  for (unsigned col = lid; col < N; col+=lsz)'
+    result += '\n  {'
+
+    # Loop body
+    A       = 'A[' + gen_index(config,'col','row','N') + ']'
+    x       = 'xold[col]'
+    result += '\n    ' + gen_cond_accum(config, 'row != col', 'tmp', A, x) + ';'
+
+    # Loop end
+    result += '\n  }\n'
+
+    # xnew = (b - tmp) / D
+    D = 'A[' + gen_index(config,'row','row','N') + ']'
+    if config['kernel'] == 'row_per_wi':
+        result += '\n  xnew[row] = (b[row] - tmp) / %s;' % D
+    elif config['kernel'] == 'row_per_wg':
+        result += '\n  scratch[lid] = tmp;'
+        result += '\n  barrier(CLK_LOCAL_MEM_FENCE);'
+        result += '\n  for (unsigned offset = lsz/2; offset > 0; offset/=2)'
+        result += '\n  {'
+        result += '\n    if (lid < offset)'
+        result += '\n      scratch[lid] += scratch[lid + offset];'
+        result += '\n    barrier(CLK_LOCAL_MEM_FENCE);'
+        result += '\n  }'
+        result += '\n  if (lid == 0)'
+        result += '\n    xnew[row] = (b[row] - scratch[0]) / %s;' % D
+
+    # End of kernel
+    result += '\n}\n'
+
+    # Convergence checking kernel
+    result += '''
+kernel void convergence(const unsigned N,
+                        global double *x0,
+                        global double *x1,
+                        global double *result,
+                        local  double *scratch)
+{
+  size_t row = get_global_id(0);
+  size_t lid = get_local_id(0);
+  size_t lsz = get_local_size(0);
+
+  double diff = x0[row] - x1[row];
+  scratch[lid] = diff*diff;
+  barrier(CLK_LOCAL_MEM_FENCE);
+  for (unsigned offset = lsz/2; offset > 0; offset/=2)
+  {
+    if (lid < offset)
+      scratch[lid] += scratch[lid + offset];
+    barrier(CLK_LOCAL_MEM_FENCE);
+  }
+  if (lid == 0)
+    result[get_group_id(0)] = scratch[0];
+}
+    '''
 
     return result
 
