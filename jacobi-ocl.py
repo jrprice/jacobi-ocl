@@ -143,6 +143,16 @@ def run(config, norder, iterations,
     print 'Runtime = %.3fs (%d iterations)' % (runtime, i+1)
     print 'Error   = %f' % error
 
+def generate_kernel(config):
+    result = ''
+
+    result += 'kernel void jacobi(\n'
+    result += ')\n'
+    result += '{\n'
+    result += '}\n'
+
+    return result
+
 def main():
     # Command-line arguments
     parser = argparse.ArgumentParser()
@@ -156,6 +166,8 @@ def main():
                         type=int, default=0)
     parser.add_argument('-t', '--convergence-tolerance',
                         type=float, default=0.001)
+    parser.add_argument('-p', '--print-kernel',
+                        action='store_true')
     args = parser.parse_args()
 
     # Default configuration
@@ -172,6 +184,10 @@ def main():
     if args.config:
         with open(args.config) as config_file:
             config.update(json.load(config_file))
+
+    if args.print_kernel:
+        print generate_kernel(config)
+        exit(0)
 
     # Run Jacobi solver
     run(config, args.norder, args.iterations,
