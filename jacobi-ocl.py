@@ -99,7 +99,7 @@ def run(config, norder, iterations,
         print 'Invalid kernel type'
         exit(1)
 
-    num_groups  = global_size[0] / local_size[0]
+    num_groups  = norder / local_size[0]
     h_err       = numpy.zeros(num_groups)
     d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
                             size=num_groups*typesize)
