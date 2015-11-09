@@ -104,14 +104,15 @@ def run(config, norder, iterations,
 
     if config['layout'] == 'col-major':
         # Run kernel to transpose data on device
-        d_A_colmaj = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=matrixsize)
+        d_A_colmaj = CL.Buffer(context, CL.mem_flags.READ_WRITE,
+                               size=matrixsize)
         transpose  = program.transpose
         transpose.set_arg(0, d_A)
         transpose.set_arg(1, d_A_colmaj)
         CL.enqueue_nd_range_kernel(queue, transpose, (norder,norder), None)
         d_A = d_A_colmaj
 
-    if config['divide_A'] == 'precompute':
+    if config['divide_A'] in ['precompute-global','precompute-constant']:
         # Run kernel to precompute 1/A for diagonal
         d_inv_A = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=vectorsize)
         precompute_inv_A = program.precompute_inv_A
@@ -205,10 +206,12 @@ def generate_kernel(config, norder):
             return '(%s) / A[%s]' % (numerator, index)
         elif config['divide_A'] == 'native':
             return 'native_divide(%s, A[%s])' % (numerator, index)
-        elif config['divide_A'] == 'precompute':
+        elif config['divide_A'] in ['precompute-global','precompute-constant']:
             return '(%s) * inv_A[row]' % numerator
         else:
-            raise ValueError('divide_A', 'must be \'normal\' or \'native\'')
+            raise ValueError('divide_A',
+                             'must be \'normal\' or \'native\' or '+
+                             '\'precompute-global\' or \'precompute-constant\'')
 
     # Ensure addrspace_b value is valid
     if not config['addrspace_b'] in ['global', 'constant']:
@@ -240,8 +243,10 @@ def generate_kernel(config, norder):
     result += '\n  ' + str(config['addrspace_b']) + ' double *b,'
     if config['kernel'] == 'row_per_wg':
         result += '\n  local  double *scratch,'
-    if config['divide_A'] == 'precompute':
+    if config['divide_A'] == 'precompute-global':
         result += '\n  global  double *inv_A,'
+    if config['divide_A'] == 'precompute-constant':
+        result += '\n  constant  double *inv_A,'
     result = result[:-1]
     result += ')'
 
