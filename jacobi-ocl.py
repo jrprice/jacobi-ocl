@@ -19,18 +19,19 @@ def run(config, norder, iterations,
     else:
         print 'Convergence checking disabled'
     print SEPARATOR
-    print 'Work-group size = ' + str(config['wgsize'])
-    print 'Unroll factor   = ' + str(config['unroll'])
-    print 'Kernel type     = ' + config['kernel']
-    print 'Data layout     = ' + config['layout']
-    print 'Conditional     = ' + config['conditional']
-    print 'fmad            = ' + config['fmad']
-    print 'Divide by A     = ' + config['divide_A']
-    print 'b address space = ' + config['addrspace_b']
-    print 'Integer type    = ' + config['integer']
-    print 'Relaxed math    = ' + str(config['relaxed_math'])
-    print 'Use mad24       = ' + str(config['use_mad24'])
-    print 'Constant norder = ' + str(config['const_norder'])
+    print 'Work-group size    = ' + str(config['wgsize'])
+    print 'Unroll factor      = ' + str(config['unroll'])
+    print 'Kernel type        = ' + config['kernel']
+    print 'Data layout        = ' + config['layout']
+    print 'Conditional        = ' + config['conditional']
+    print 'fmad               = ' + config['fmad']
+    print 'Divide by A        = ' + config['divide_A']
+    print 'b address space    = ' + config['addrspace_b']
+    print 'xold address space = ' + config['addrspace_xold']
+    print 'Integer type       = ' + config['integer']
+    print 'Relaxed math       = ' + str(config['relaxed_math'])
+    print 'Use mad24          = ' + str(config['use_mad24'])
+    print 'Constant norder    = ' + str(config['const_norder'])
     print SEPARATOR
 
     # Ensure work-group size is valid
@@ -217,6 +218,10 @@ def generate_kernel(config, norder):
     if not config['addrspace_b'] in ['global', 'constant']:
         raise ValueError('addrspace_b', 'must be \'global\' or \'constant\'')
 
+    # Ensure addrspace_xold value is valid
+    if not config['addrspace_xold'] in ['global', 'constant']:
+        raise ValueError('addrspace_xold', 'must be \'global\' or \'constant\'')
+
     # Ensure integer value is valid
     if not config['integer'] in ['uint', 'int']:
         raise ValueError('integer', 'must be \'uint\' or \'or\'')
@@ -237,10 +242,10 @@ def generate_kernel(config, norder):
     # Kernel arguments
     if not config['const_norder']:
         result += '\n  const  %s norder,' % inttype
-    result += '\n  global double *xold,'
+    result += '\n  %s double *xold,' % str(config['addrspace_xold'])
     result += '\n  global double *xnew,'
     result += '\n  global double *A,'
-    result += '\n  ' + str(config['addrspace_b']) + ' double *b,'
+    result += '\n  %s double *b,' % str(config['addrspace_b'])
     if config['kernel'] == 'row_per_wg':
         result += '\n  local  double *scratch,'
     if config['divide_A'] == 'precompute-global':
@@ -365,18 +370,19 @@ def main():
 
     # Default configuration
     config = dict()
-    config['wgsize']       = 64
-    config['unroll']       = 1
-    config['kernel']       = 'row_per_wi'
-    config['layout']       = 'row-major'
-    config['conditional']  = 'branch'
-    config['fmad']         = 'op'
-    config['divide_A']     = 'normal'
-    config['addrspace_b']  = 'global'
-    config['integer']      = 'uint'
-    config['relaxed_math'] = False
-    config['use_mad24']    = False
-    config['const_norder'] = False
+    config['wgsize']         = 64
+    config['unroll']         = 1
+    config['kernel']         = 'row_per_wi'
+    config['layout']         = 'row-major'
+    config['conditional']    = 'branch'
+    config['fmad']           = 'op'
+    config['divide_A']       = 'normal'
+    config['addrspace_b']    = 'global'
+    config['addrspace_xold'] = 'global'
+    config['integer']        = 'uint'
+    config['relaxed_math']   = False
+    config['use_mad24']      = False
+    config['const_norder']   = False
 
     # Load config from JSON file
     if args.config:
