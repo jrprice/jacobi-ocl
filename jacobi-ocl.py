@@ -25,6 +25,7 @@ def run(config, norder, iterations,
     print 'Data layout     = ' + config['layout']
     print 'Conditional     = ' + config['conditional']
     print 'fmad            = ' + config['fmad']
+    print 'Divide by A     = ' + config['divide_A']
     print 'b address space = ' + config['addrspace_b']
     print 'Integer type    = ' + config['integer']
     print 'Relaxed math    = ' + str(config['relaxed_math'])
@@ -186,6 +187,15 @@ def generate_kernel(config, norder):
         result += '%s = %s' % (acc, gen_fmad(config, a, _b, acc))
         return result
 
+    def gen_divide_A(config, numerator):
+        index = gen_index(config,'row','row','norder')
+        if config['divide_A'] == 'normal':
+            return '(%s) / A[%s]' % (numerator, index)
+        elif config['divide_A'] == 'native':
+            return 'native_divide(%s, A[%s])' % (numerator, index)
+        else:
+            raise ValueError('divide_A', 'must be \'normal\' or \'native\'')
+
     # Ensure addrspace_b value is valid
     if not config['addrspace_b'] in ['global', 'constant']:
         raise ValueError('addrspace_b', 'must be \'global\' or \'constant\'')
@@ -254,9 +264,9 @@ def generate_kernel(config, norder):
     result += '\n  }\n'
 
     # xnew = (b - tmp) / D
-    D = 'A[' + gen_index(config,'row','row','norder') + ']'
     if config['kernel'] == 'row_per_wi':
-        result += '\n  xnew[row] = (b[row] - tmp) / %s;' % D
+        xnew    = gen_divide_A(config, 'b[row] - tmp')
+        result += '\n  xnew[row] = %s;' % xnew
     elif config['kernel'] == 'row_per_wg':
         result += '\n  scratch[lid] = tmp;'
         result += '\n  barrier(CLK_LOCAL_MEM_FENCE);'
@@ -267,7 +277,8 @@ def generate_kernel(config, norder):
         result += '\n    barrier(CLK_LOCAL_MEM_FENCE);'
         result += '\n  }'
         result += '\n  if (lid == 0)'
-        result += '\n    xnew[row] = (b[row] - scratch[0]) / %s;' % D
+        xnew    = gen_divide_A(config, 'b[row] - scratch[0]')
+        result += '\n    xnew[row] = %s;' % xnew
 
     # End of kernel
     result += '\n}\n'
@@ -332,6 +343,7 @@ def main():
     config['layout']       = 'row-major'
     config['conditional']  = 'branch'
     config['fmad']         = 'op'
+    config['divide_A']     = 'normal'
     config['addrspace_b']  = 'global'
     config['integer']      = 'uint'
     config['relaxed_math'] = False
