@@ -22,6 +22,7 @@ def run(config, norder, iterations,
     print 'Work-group size = ' + str(config['wgsize'])
     print 'Unroll factor   = ' + str(config['unroll'])
     print 'Kernel type     = ' + config['kernel']
+    print 'Data layout     = ' + config['layout']
     print 'Conditional     = ' + config['conditional']
     print 'fmad            = ' + config['fmad']
     print 'b address space = ' + config['addrspace_b']
@@ -85,9 +86,6 @@ def run(config, norder, iterations,
     arg_b       = arg_A    + 1
     arg_scratch = arg_b    + 1
 
-    jacobi.set_arg(arg_A, d_A)
-    jacobi.set_arg(arg_b, d_b)
-
     # Compute global size
     local_size = (config['wgsize'],)
     if config['kernel'] == 'row_per_wi':
@@ -108,6 +106,18 @@ def run(config, norder, iterations,
     convergence.set_arg(1, d_x1)
     convergence.set_arg(2, d_err)
     convergence.set_arg(3, CL.LocalMemory(local_size[0]*typesize))
+
+    if config['layout'] == 'col-major':
+        # Run kernel to transpose data on device
+        d_A_colmaj = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=matrixsize)
+        transpose  = program.transpose
+        transpose.set_arg(0, d_A)
+        transpose.set_arg(1, d_A_colmaj)
+        CL.enqueue_nd_range_kernel(queue, transpose, (norder,norder), None)
+        d_A = d_A_colmaj
+
+    jacobi.set_arg(arg_A, d_A)
+    jacobi.set_arg(arg_b, d_b)
 
     # Run Jacobi solver
     start = time.time()
@@ -142,9 +152,17 @@ def run(config, norder, iterations,
 def generate_kernel(config, norder):
 
     def gen_index(config, col, row, N):
+        if config['layout'] == 'row-major':
+            x,y = col,row
+        elif config['layout'] == 'col-major':
+            x,y = row,col
+        else:
+            raise ValueError('layout', 'must be \'row-major\' or \'col-major\'')
+
         if config['use_mad24']:
-            return 'mad24(%s, %s, %s)' % (row, N, col)
-        return '(%s*%s + %s)' % (row, N, col)
+            return 'mad24(%s, %s, %s)' % (y, N, x)
+        else:
+            return '(%s*%s + %s)' % (y, N, x)
 
     def gen_fmad(config, x, y, z):
         if config['fmad'] == 'op':
@@ -256,6 +274,14 @@ def generate_kernel(config, norder):
 
     # Convergence checking kernel
     result += '''
+kernel void transpose(global double *input, global double *output)
+{
+  int row = get_global_id(0);
+  int col = get_global_id(1);
+  int n   = get_global_size(0);
+  output[row*n + col] = input[col*n + row];
+}
+
 kernel void convergence(global double *x0,
                         global double *x1,
                         global double *result,
@@ -303,6 +329,7 @@ def main():
     config['wgsize']       = 64
     config['unroll']       = 1
     config['kernel']       = 'row_per_wi'
+    config['layout']       = 'row-major'
     config['conditional']  = 'branch'
     config['fmad']         = 'op'
     config['addrspace_b']  = 'global'
