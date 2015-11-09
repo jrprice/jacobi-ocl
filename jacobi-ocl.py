@@ -206,7 +206,7 @@ def generate_kernel(config, norder):
 
     # Get row index
     if config['kernel'] == 'row_per_wi':
-        result += '\n  %s row = get_global_id(0);' % intype
+        result += '\n  %s row = get_global_id(0);' % inttype
         col_start = '0'
         col_inc   = '1'
     elif config['kernel'] == 'row_per_wg':
