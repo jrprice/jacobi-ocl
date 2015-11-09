@@ -241,7 +241,7 @@ def generate_kernel(config, norder):
 
     # Kernel arguments
     if not config['const_norder']:
-        result += '\n  const  %s norder,' % inttype
+        result += '\n  const %s norder,' % inttype
     result += '\n  %s double *xold,' % str(config['addrspace_xold'])
     result += '\n  global double *xnew,'
     result += '\n  global double *A,'
@@ -280,11 +280,11 @@ def generate_kernel(config, norder):
     result += '\n  {'
 
     # Loop body
-    A          = 'A[' + gen_index(config,'col','row','norder') + ']'
+    A          = 'A[%s]' % gen_index(config,'col','row','norder')
     x          = 'xold[col]'
     loop_body  = '\n    %s;' % gen_cond_accum(config, 'row != col', 'tmp', A, x)
     loop_body += '\n    col += %s;' % col_inc
-    result += loop_body * config['unroll']
+    result    += loop_body * config['unroll']
 
     # Loop end
     result += '\n  }\n'
