@@ -76,16 +76,19 @@ def run(config, norder, iterations,
     CL.enqueue_copy(queue, d_xold, h_x)
 
     # Create kernel and set invariant arguments
-    jacobi      = program.jacobi
+    arg_index = 0
+    jacobi    = program.jacobi
     if not config['const_norder']:
-        jacobi.set_arg(0, numpy.uint32(norder))
-        arg_xold = 1
-    else:
-        arg_xold = 0
-    arg_xnew    = arg_xold + 1
-    arg_A       = arg_xnew + 1
-    arg_b       = arg_A    + 1
-    arg_scratch = arg_b    + 1
+        jacobi.set_arg(arg_index, numpy.uint32(norder))
+        arg_index += 1
+    arg_xold    = arg_index
+    arg_index  += 1
+    arg_xnew    = arg_index
+    arg_index  += 1
+    jacobi.set_arg(arg_index, d_A)
+    arg_index  += 1
+    jacobi.set_arg(arg_index, d_b)
+    arg_index  += 1
 
     # Compute global size
     local_size = (config['wgsize'],)
@@ -93,20 +96,11 @@ def run(config, norder, iterations,
         global_size = (norder,)
     elif config['kernel'] == 'row_per_wg':
         global_size = (norder*local_size[0],)
-        jacobi.set_arg(arg_scratch, CL.LocalMemory(local_size[0]*typesize))
+        jacobi.set_arg(arg_index, CL.LocalMemory(local_size[0]*typesize))
+        arg_index += 1
     else:
         print 'Invalid kernel type'
         exit(1)
-
-    num_groups  = norder / local_size[0]
-    h_err       = numpy.zeros(num_groups)
-    d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
-                            size=num_groups*typesize)
-    convergence = program.convergence
-    convergence.set_arg(0, d_x0)
-    convergence.set_arg(1, d_x1)
-    convergence.set_arg(2, d_err)
-    convergence.set_arg(3, CL.LocalMemory(local_size[0]*typesize))
 
     if config['layout'] == 'col-major':
         # Run kernel to transpose data on device
@@ -117,8 +111,26 @@ def run(config, norder, iterations,
         CL.enqueue_nd_range_kernel(queue, transpose, (norder,norder), None)
         d_A = d_A_colmaj
 
-    jacobi.set_arg(arg_A, d_A)
-    jacobi.set_arg(arg_b, d_b)
+    if config['divide_A'] == 'precompute':
+        # Run kernel to precompute 1/A for diagonal
+        d_inv_A = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=vectorsize)
+        precompute_inv_A = program.precompute_inv_A
+        precompute_inv_A.set_arg(0, d_A)
+        precompute_inv_A.set_arg(1, d_inv_A)
+        CL.enqueue_nd_range_kernel(queue, precompute_inv_A, (norder,), None)
+        jacobi.set_arg(arg_index, d_inv_A)
+        arg_index += 1
+
+    # Prepare convergence checking kernel
+    num_groups  = norder / local_size[0]
+    h_err       = numpy.zeros(num_groups)
+    d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
+                            size=num_groups*typesize)
+    convergence = program.convergence
+    convergence.set_arg(0, d_x0)
+    convergence.set_arg(1, d_x1)
+    convergence.set_arg(2, d_err)
+    convergence.set_arg(3, CL.LocalMemory(local_size[0]*typesize))
 
     # Run Jacobi solver
     start = time.time()
@@ -193,6 +205,8 @@ def generate_kernel(config, norder):
             return '(%s) / A[%s]' % (numerator, index)
         elif config['divide_A'] == 'native':
             return 'native_divide(%s, A[%s])' % (numerator, index)
+        elif config['divide_A'] == 'precompute':
+            return '(%s) * inv_A[row]' % numerator
         else:
             raise ValueError('divide_A', 'must be \'normal\' or \'native\'')
 
@@ -226,6 +240,8 @@ def generate_kernel(config, norder):
     result += '\n  ' + str(config['addrspace_b']) + ' double *b,'
     if config['kernel'] == 'row_per_wg':
         result += '\n  local  double *scratch,'
+    if config['divide_A'] == 'precompute':
+        result += '\n  global  double *inv_A,'
     result = result[:-1]
     result += ')'
 
@@ -291,6 +307,13 @@ kernel void transpose(global double *input, global double *output)
   int col = get_global_id(1);
   int n   = get_global_size(0);
   output[row*n + col] = input[col*n + row];
+}
+
+kernel void precompute_inv_A(global double *A, global double *inv_A)
+{
+  int row = get_global_id(0);
+  int n   = get_global_size(0);
+  inv_A[row] = 1 / A[row*n + row];
 }
 
 kernel void convergence(global double *x0,
