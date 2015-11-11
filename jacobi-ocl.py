@@ -237,6 +237,9 @@ def generate_kernel(config, norder):
 
     result = ''
 
+    # Enable FP64 extension for OpenCL 1.1 devices
+    result += '\n#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n\n'
+
     result += 'kernel void jacobi('
 
     # Kernel arguments
