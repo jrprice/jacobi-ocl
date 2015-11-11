@@ -265,11 +265,11 @@ def generate_kernel(config, norder):
     result += '\n  global double *A,'
     result += '\n  %s double *b,' % str(config['addrspace_b'])
     if config['wgsize'][0] > 1:
-        result += '\n  local  double *scratch,'
+        result += '\n  local double *scratch,'
     if config['divide_A'] == 'precompute-global':
-        result += '\n  global  double *inv_A,'
-    if config['divide_A'] == 'precompute-constant':
-        result += '\n  constant  double *inv_A,'
+        result += '\n  global double *inv_A,'
+    elif config['divide_A'] == 'precompute-constant':
+        result += '\n  constant double *inv_A,'
     result = result[:-1]
     result += ')'
 
