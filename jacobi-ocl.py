@@ -86,9 +86,9 @@ def run(config, norder, iterations,
     arg_index  += 1
     arg_xnew    = arg_index
     arg_index  += 1
-    jacobi.set_arg(arg_index, d_A)
+    arg_A       = arg_index
     arg_index  += 1
-    jacobi.set_arg(arg_index, d_b)
+    arg_b       = arg_index
     arg_index  += 1
 
     # Compute global size
@@ -122,6 +122,9 @@ def run(config, norder, iterations,
         CL.enqueue_nd_range_kernel(queue, precompute_inv_A, (norder,), None)
         jacobi.set_arg(arg_index, d_inv_A)
         arg_index += 1
+
+    jacobi.set_arg(arg_A, d_A)
+    jacobi.set_arg(arg_b, d_b)
 
     # Prepare convergence checking kernel
     num_groups  = norder / local_size[0]
