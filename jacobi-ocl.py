@@ -19,8 +19,7 @@ def run(config, norder, iterations,
     else:
         print 'Convergence checking disabled'
     print SEPARATOR
-    print 'Work-group size    = ' + str(config['wgsize_x']) + 'x' \
-                                  + str(config['wgsize_y'])
+    print 'Work-group size    = ' + str(config['wgsize'])
     print 'Unroll factor      = ' + str(config['unroll'])
     print 'Data layout        = ' + config['layout']
     print 'Conditional        = ' + config['conditional']
@@ -36,11 +35,11 @@ def run(config, norder, iterations,
     print SEPARATOR
 
     # Ensure work-group size is valid
-    if config['wgsize_x'] & (config['wgsize_x']-1):
-        print 'Invalid wgsize_x value (must be power of two)'
+    if config['wgsize'][0] & (config['wgsize'][0]-1):
+        print 'Invalid wgsize[0] value (must be power of two)'
         exit(1)
-    if norder % config['wgsize_y']:
-        print 'Invalid wgsize_y value (must divide matrix order)'
+    if norder % config['wgsize'][1]:
+        print 'Invalid wgsize[1] value (must divide matrix order)'
         exit(1)
 
     # Initialize OpenCL objects
@@ -96,9 +95,9 @@ def run(config, norder, iterations,
     arg_index  += 1
 
     # Compute global size
-    local_size = (config['wgsize_x'],config['wgsize_y'])
+    local_size = (config['wgsize'][0],config['wgsize'][1])
     global_size = (local_size[0],norder)
-    if config['wgsize_x'] > 1:
+    if config['wgsize'][0] > 1:
         jacobi.set_arg(arg_index,
                        CL.LocalMemory(local_size[0]*local_size[1]*typesize))
         arg_index += 1
@@ -127,7 +126,7 @@ def run(config, norder, iterations,
     jacobi.set_arg(arg_b, d_b)
 
     # Prepare convergence checking kernel
-    conv_wgsize = 64 # TODO: Pick something else? (e.g wgsize_x*wgsize_y)
+    conv_wgsize = 64 # TODO: Pick something else? (e.g wgsize[0]*wgsize[1])
     num_groups  = norder / conv_wgsize
     h_err       = numpy.zeros(num_groups)
     d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
@@ -232,7 +231,7 @@ def generate_kernel(config, norder):
     inttype = str(config['integer'])
 
     # Ensure unroll factor is valid
-    cols_per_wi = norder / config['wgsize_x']
+    cols_per_wi = norder / config['wgsize'][0]
     if cols_per_wi % config['unroll']:
         print 'Invalid unroll factor (must exactly divide %d)' % cols_per_wi
         exit(1)
@@ -244,12 +243,12 @@ def generate_kernel(config, norder):
     lszx = 'get_local_size(0)'
     lszy = 'get_local_size(1)'
     if config['const_wgsize']:
-        if config['wgsize_x'] == 1:
+        if config['wgsize'][0] == 1:
             lidx = '0'
-        if config['wgsize_y'] == 1:
+        if config['wgsize'][1] == 1:
             lidy = '0'
-        lszx = config['wgsize_x']
-        lszy = config['wgsize_y']
+        lszx = config['wgsize'][0]
+        lszy = config['wgsize'][1]
 
     result = ''
 
@@ -265,7 +264,7 @@ def generate_kernel(config, norder):
     result += '\n  global double *xnew,'
     result += '\n  global double *A,'
     result += '\n  %s double *b,' % str(config['addrspace_b'])
-    if config['wgsize_x'] > 1:
+    if config['wgsize'][0] > 1:
         result += '\n  local  double *scratch,'
     if config['divide_A'] == 'precompute-global':
         result += '\n  global  double *inv_A,'
@@ -302,7 +301,7 @@ def generate_kernel(config, norder):
     result += '\n  }\n'
 
     # xnew = (b - tmp) / D
-    if config['wgsize_x'] > 1:
+    if config['wgsize'][0] > 1:
         result += '\n  int lid = %s + %s*%s;' % (lidx,lidy,lszx)
         result += '\n  scratch[lid] = tmp;'
         result += '\n  barrier(CLK_LOCAL_MEM_FENCE);'
@@ -383,8 +382,7 @@ def main():
 
     # Default configuration
     config = dict()
-    config['wgsize_x']       = 64
-    config['wgsize_y']       = 1
+    config['wgsize']         = [64,1]
     config['unroll']         = 1
     config['layout']         = 'row-major'
     config['conditional']    = 'branch'
