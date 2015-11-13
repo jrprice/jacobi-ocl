@@ -5,7 +5,7 @@ import numpy
 import pyopencl as CL
 import time
 
-def run(config, norder, iterations,
+def run(config, norder, iterations, device,
         convergence_frequency=0, convergence_tolerance=0.001):
 
     # Print configuration
@@ -43,7 +43,10 @@ def run(config, norder, iterations,
         exit(1)
 
     # Initialize OpenCL objects
-    context = CL.create_some_context()
+    if device:
+        context = CL.Context([device])
+    else:
+        context = CL.create_some_context()
     queue   = CL.CommandQueue(context)
     print 'Using \'' + context.devices[0].name + '\''
 
@@ -378,7 +381,24 @@ def main():
                         type=float, default=0.001)
     parser.add_argument('-p', '--print-kernel',
                         action='store_true')
+    parser.add_argument('-l', '--list',
+                        action='store_true')
+    parser.add_argument('-d', '--device',
+                        type=int, default=0)
     args = parser.parse_args()
+
+    # Print device list
+    if args.list:
+        devices = get_device_list()
+        if devices:
+            print
+            print 'OpenCL devices:'
+            for i in range(len(devices)):
+                print '  %d: %s' % (i,devices[i].name)
+            print
+        else:
+            print 'No OpenCL devices found'
+        exit(0)
 
     # Default configuration
     config = dict()
@@ -406,8 +426,15 @@ def main():
         exit(0)
 
     # Run Jacobi solver
-    run(config, args.norder, args.iterations,
+    run(config, args.norder, args.iterations, get_device_list()[args.device],
         args.convergence_frequency, args.convergence_tolerance)
+
+def get_device_list():
+    platforms = CL.get_platforms()
+    devices   = []
+    for p in platforms:
+        devices += p.get_devices()
+    return devices
 
 if __name__ == '__main__':
     main()
