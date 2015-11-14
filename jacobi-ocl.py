@@ -174,10 +174,10 @@ def run(config, norder, iterations, device,
 
 def generate_kernel(config, norder):
 
-    def gen_ptrarg(config, addrspace, name):
-        const    = 'const' if config['use_const'] else ''
+    def gen_ptrarg(config, addrspace, name, readonly=True):
+        const    = 'const' if readonly and config['use_const'] else ''
         restrict = 'restrict' if config['use_restrict'] else ''
-        ptrarg   = '%-8s %s double *%s %s'
+        ptrarg   = '%-8s %-5s double *%s %s'
         return ptrarg % (addrspace, const, restrict, name)
 
     def gen_index(config, col, row, N):
@@ -272,11 +272,11 @@ def generate_kernel(config, norder):
     if not config['const_norder']:
         result += '\n  const %s norder,' % inttype
     result += '\n  %s,' % gen_ptrarg(config, config['addrspace_xold'], 'xold')
-    result += '\n  %s,' % gen_ptrarg(config, 'global', 'xnew')
+    result += '\n  %s,' % gen_ptrarg(config, 'global', 'xnew', False)
     result += '\n  %s,' % gen_ptrarg(config, 'global', 'A')
     result += '\n  %s,' % gen_ptrarg(config, config['addrspace_b'], 'b')
     if config['wgsize'][0] > 1:
-        result += '\n  %s,' % gen_ptrarg(config, 'local', 'scratch')
+        result += '\n  %s,' % gen_ptrarg(config, 'local', 'scratch', False)
     if config['divide_A'] == 'precompute-global':
         result += '\n  %s,' % gen_ptrarg(config, 'global', 'inv_A')
     elif config['divide_A'] == 'precompute-constant':
