@@ -29,6 +29,7 @@ def run(config, norder, iterations, device,
     print 'xold address space = ' + config['addrspace_xold']
     print 'Integer type       = ' + config['integer']
     print 'Relaxed math       = ' + str(config['relaxed_math'])
+    print 'Use restrict       = ' + str(config['use_restrict'])
     print 'Use mad24          = ' + str(config['use_mad24'])
     print 'Constant norder    = ' + str(config['const_norder'])
     print 'Constant wgsize    = ' + str(config['const_wgsize'])
@@ -172,6 +173,11 @@ def run(config, norder, iterations, device,
 
 def generate_kernel(config, norder):
 
+    def gen_ptrarg(config, addrspace, name):
+        restrict = 'restrict' if config['use_restrict'] else ''
+        ptrarg   = '%-8s double *%s %s'
+        return ptrarg % (addrspace, restrict, name)
+
     def gen_index(config, col, row, N):
         if config['layout'] == 'row-major':
             x,y = col,row
@@ -263,16 +269,16 @@ def generate_kernel(config, norder):
     # Kernel arguments
     if not config['const_norder']:
         result += '\n  const %s norder,' % inttype
-    result += '\n  %s double *xold,' % str(config['addrspace_xold'])
-    result += '\n  global double *xnew,'
-    result += '\n  global double *A,'
-    result += '\n  %s double *b,' % str(config['addrspace_b'])
+    result += '\n  %s,' % gen_ptrarg(config, config['addrspace_xold'], 'xold')
+    result += '\n  %s,' % gen_ptrarg(config, 'global', 'xnew')
+    result += '\n  %s,' % gen_ptrarg(config, 'global', 'A')
+    result += '\n  %s,' % gen_ptrarg(config, config['addrspace_b'], 'b')
     if config['wgsize'][0] > 1:
-        result += '\n  local double *scratch,'
+        result += '\n  %s,' % gen_ptrarg(config, 'local', 'scratch')
     if config['divide_A'] == 'precompute-global':
-        result += '\n  global double *inv_A,'
+        result += '\n  %s,' % gen_ptrarg(config, 'global', 'inv_A')
     elif config['divide_A'] == 'precompute-constant':
-        result += '\n  constant double *inv_A,'
+        result += '\n  %s,' % gen_ptrarg(config, 'constant', 'inv_A')
     result = result[:-1]
     result += ')'
 
@@ -412,6 +418,7 @@ def main():
     config['addrspace_xold'] = 'global'
     config['integer']        = 'uint'
     config['relaxed_math']   = False
+    config['use_restrict']   = False
     config['use_mad24']      = False
     config['const_norder']   = False
     config['const_wgsize']   = False
