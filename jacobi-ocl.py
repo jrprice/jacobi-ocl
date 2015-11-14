@@ -30,6 +30,7 @@ def run(config, norder, iterations, device,
     print 'Integer type       = ' + config['integer']
     print 'Relaxed math       = ' + str(config['relaxed_math'])
     print 'Use restrict       = ' + str(config['use_restrict'])
+    print 'Use const pointers = ' + str(config['use_const'])
     print 'Use mad24          = ' + str(config['use_mad24'])
     print 'Constant norder    = ' + str(config['const_norder'])
     print 'Constant wgsize    = ' + str(config['const_wgsize'])
@@ -174,9 +175,10 @@ def run(config, norder, iterations, device,
 def generate_kernel(config, norder):
 
     def gen_ptrarg(config, addrspace, name):
+        const    = 'const' if config['use_const'] else ''
         restrict = 'restrict' if config['use_restrict'] else ''
-        ptrarg   = '%-8s double *%s %s'
-        return ptrarg % (addrspace, restrict, name)
+        ptrarg   = '%-8s %s double *%s %s'
+        return ptrarg % (addrspace, const, restrict, name)
 
     def gen_index(config, col, row, N):
         if config['layout'] == 'row-major':
@@ -418,6 +420,7 @@ def main():
     config['addrspace_xold'] = 'global'
     config['integer']        = 'uint'
     config['relaxed_math']   = False
+    config['use_const']      = False
     config['use_restrict']   = False
     config['use_mad24']      = False
     config['const_norder']   = False
