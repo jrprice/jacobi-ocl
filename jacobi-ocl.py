@@ -372,7 +372,7 @@ kernel void convergence(global double *x0,
 }
     '''
 
-    return result
+    return str(result)
 
 def main():
     # Command-line arguments
