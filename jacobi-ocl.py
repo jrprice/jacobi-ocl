@@ -85,9 +85,14 @@ def run(config, norder, iterations, device,
     CL.enqueue_copy(queue, d_b, h_b)
     CL.enqueue_copy(queue, d_xold, h_x)
 
-    # Create kernel and set invariant arguments
+    # Create kernels
+    jacobi           = program.jacobi
+    transpose        = program.transpose
+    precompute_inv_A = program.precompute_inv_A
+    convergence      = program.convergence
+
+    # Calculate argument indices
     arg_index = 0
-    jacobi    = program.jacobi
     if not config['const_norder']:
         jacobi.set_arg(arg_index, numpy.uint32(norder))
         arg_index += 1
@@ -101,18 +106,33 @@ def run(config, norder, iterations, device,
     arg_index  += 1
 
     # Compute global size
-    local_size = (config['wgsize'][0],config['wgsize'][1])
+    local_size  = (config['wgsize'][0],config['wgsize'][1])
     global_size = (local_size[0],norder)
     if config['wgsize'][0] > 1:
         jacobi.set_arg(arg_index,
                        CL.LocalMemory(local_size[0]*local_size[1]*typesize))
         arg_index += 1
 
+    # Prepare convergence checking kernel
+    conv_wgsize = 64 # TODO: Pick something else? (e.g wgsize[0]*wgsize[1])
+    num_groups  = norder / conv_wgsize
+    h_err       = numpy.zeros(num_groups)
+    d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
+                            size=num_groups*typesize)
+    convergence.set_arg(0, d_x0)
+    convergence.set_arg(1, d_x1)
+    convergence.set_arg(2, d_err)
+    convergence.set_arg(3, CL.LocalMemory(conv_wgsize*typesize))
+
+
+    # Start timing
+    queue.finish()
+    start = time.time()
+
     if config['layout'] == 'col-major':
         # Run kernel to transpose data on device
         d_A_colmaj = CL.Buffer(context, CL.mem_flags.READ_WRITE,
                                size=matrixsize)
-        transpose  = program.transpose
         transpose.set_arg(0, d_A)
         transpose.set_arg(1, d_A_colmaj)
         CL.enqueue_nd_range_kernel(queue, transpose, (norder,norder), None)
@@ -121,7 +141,6 @@ def run(config, norder, iterations, device,
     if config['divide_A'] in ['precompute-global','precompute-constant']:
         # Run kernel to precompute 1/A for diagonal
         d_inv_A = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=vectorsize)
-        precompute_inv_A = program.precompute_inv_A
         precompute_inv_A.set_arg(0, d_A)
         precompute_inv_A.set_arg(1, d_inv_A)
         CL.enqueue_nd_range_kernel(queue, precompute_inv_A, (norder,), None)
@@ -131,20 +150,7 @@ def run(config, norder, iterations, device,
     jacobi.set_arg(arg_A, d_A)
     jacobi.set_arg(arg_b, d_b)
 
-    # Prepare convergence checking kernel
-    conv_wgsize = 64 # TODO: Pick something else? (e.g wgsize[0]*wgsize[1])
-    num_groups  = norder / conv_wgsize
-    h_err       = numpy.zeros(num_groups)
-    d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
-                            size=num_groups*typesize)
-    convergence = program.convergence
-    convergence.set_arg(0, d_x0)
-    convergence.set_arg(1, d_x1)
-    convergence.set_arg(2, d_err)
-    convergence.set_arg(3, CL.LocalMemory(conv_wgsize*typesize))
-
     # Run Jacobi solver
-    start = time.time()
     for i in range(iterations):
         jacobi.set_arg(arg_xold, d_xold)
         jacobi.set_arg(arg_xnew, d_xnew)
@@ -161,6 +167,7 @@ def run(config, norder, iterations, device,
 
         d_xold,d_xnew = d_xnew,d_xold
 
+    # Stop timing
     queue.finish()
     end = time.time()
 
