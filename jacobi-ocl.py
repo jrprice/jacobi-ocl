@@ -34,6 +34,7 @@ def run(config, norder, iterations, device,
     print 'Use mad24          = ' + str(config['use_mad24'])
     print 'Constant norder    = ' + str(config['const_norder'])
     print 'Constant wgsize    = ' + str(config['const_wgsize'])
+    print 'Coalesce columns   = ' + str(config['coalesce_cols'])
     print SEPARATOR
 
     # Ensure work-group size is valid
@@ -291,14 +292,22 @@ def generate_kernel(config, norder):
     result += '\n  const %s row  = %s;' % (inttype,row)
     result += '\n  const %s lidx = %s;' % (inttype,lidx)
     result += '\n  const %s lszx = %s;' % (inttype,lszx)
-    col_start = 'lidx'
-    col_inc   = 'lszx'
+
+    # Get column range for work-item
+    if config['coalesce_cols']:
+        col_beg = 'lidx'
+        col_end = 'norder'
+        col_inc = 'lszx'
+    else:
+        col_beg = 'lidx*%d' % cols_per_wi
+        col_end = '%s+%d' % (col_beg,cols_per_wi)
+        col_inc = '1'
 
     # Initialise accumulator
     result += '\n\n  double tmp = 0.0;'
 
     # Loop begin
-    result += '\n  for (%s col = %s; col < norder; )' % (inttype, col_start)
+    result += '\n  for (%s col = %s; col < %s; )' % (inttype, col_beg, col_end)
     result += '\n  {'
 
     # Loop body
@@ -425,6 +434,7 @@ def main():
     config['use_mad24']      = False
     config['const_norder']   = False
     config['const_wgsize']   = False
+    config['coalesce_cols']  = True
 
     # Load config from JSON file
     if args.config:
