@@ -177,7 +177,7 @@ def run(config, norder, iterations, device,
     # Print runtime and final error
     runtime = (end-start)
     error   = math.sqrt(sum([e*e for e in (h_b - numpy.dot(h_A, h_x))]))
-    print 'Runtime = %.3fs (%d iterations)' % (runtime, i+1)
+    print 'Runtime = %.3gs (%d iterations)' % (runtime, i+1)
     print 'Error   = %f' % error
 
 def generate_kernel(config, norder):
