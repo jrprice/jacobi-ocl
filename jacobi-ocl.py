@@ -19,6 +19,7 @@ def run(config, norder, iterations, device,
     else:
         print 'Convergence checking disabled'
     print SEPARATOR
+    print 'Data-type          = ' + str(config['datatype'])
     print 'Work-group size    = ' + str(config['wgsize'])
     print 'Unroll factor      = ' + str(config['unroll'])
     print 'Data layout        = ' + config['layout']
@@ -45,6 +46,14 @@ def run(config, norder, iterations, device,
         print 'Invalid wgsize[1] value (must divide matrix order)'
         exit(1)
 
+    if config['datatype'] == 'float':
+        datatype = numpy.dtype(numpy.float32)
+    elif config['datatype'] == 'double':
+        datatype = numpy.dtype(numpy.float64)
+    else:
+        print 'Invalid data-type'
+        exit(1)
+
     # Initialize OpenCL objects
     if device:
         context = CL.Context([device])
@@ -64,7 +73,7 @@ def run(config, norder, iterations, device,
     program        = CL.Program(context, kernel_source).build(build_options)
 
     # Create buffers
-    typesize   = numpy.dtype(numpy.float64).itemsize
+    typesize   = numpy.dtype(datatype).itemsize
     vectorsize = norder*typesize
     matrixsize = norder*norder*typesize
     d_A     = CL.Buffer(context, CL.mem_flags.READ_ONLY,  size=matrixsize)
@@ -76,11 +85,11 @@ def run(config, norder, iterations, device,
 
     # Initialize data
     numpy.random.seed(0)
-    h_A     = numpy.random.rand(norder, norder).astype(numpy.float64)
+    h_A     = numpy.random.rand(norder, norder).astype(datatype)
     for row in range(norder):
         h_A[row][row] += numpy.sum(h_A[row])
-    h_b     = numpy.random.rand(norder).astype(numpy.float64)
-    h_x     = numpy.zeros(norder).astype(numpy.float64)
+    h_b     = numpy.random.rand(norder).astype(datatype)
+    h_x     = numpy.zeros(norder).astype(datatype)
     CL.enqueue_copy(queue, d_A, h_A)
     CL.enqueue_copy(queue, d_b, h_b)
     CL.enqueue_copy(queue, d_xold, h_x)
@@ -182,11 +191,14 @@ def run(config, norder, iterations, device,
 
 def generate_kernel(config, norder):
 
+    if config['datatype'] != 'float' and config['datatype'] != 'double':
+        raise ValueError('datatype', 'must be \'float\' or \'double\'')
+
     def gen_ptrarg(config, addrspace, name, readonly=True):
         const    = 'const' if readonly and config['use_const'] else ''
         restrict = 'restrict' if config['use_restrict'] else ''
-        ptrarg   = '%-8s %-5s double *%s %s'
-        return ptrarg % (addrspace, const, restrict, name)
+        ptrarg   = '%-8s %-5s %s *%s %s'
+        return ptrarg % (addrspace, const, config['datatype'], restrict, name)
 
     def gen_index(config, col, row, N):
         if config['layout'] == 'row-major':
@@ -311,7 +323,7 @@ def generate_kernel(config, norder):
         col_inc = '1'
 
     # Initialise accumulator
-    result += '\n\n  double tmp = 0.0;'
+    result += '\n\n  %s tmp = 0.0;' % config['datatype']
 
     # Loop begin
     result += '\n  for (%s col = %s; col < %s; )' % (inttype, col_beg, col_end)
@@ -350,7 +362,7 @@ def generate_kernel(config, norder):
 
     # Convergence checking kernel
     result += '''
-kernel void transpose(global double *input, global double *output)
+kernel void transpose(global %(datatype)s *input, global %(datatype)s *output)
 {
   int row = get_global_id(0);
   int col = get_global_id(1);
@@ -358,23 +370,23 @@ kernel void transpose(global double *input, global double *output)
   output[row*n + col] = input[col*n + row];
 }
 
-kernel void precompute_inv_A(global double *A, global double *inv_A)
+kernel void precompute_inv_A(global %(datatype)s *A, global %(datatype)s *inv_A)
 {
   int row = get_global_id(0);
   int n   = get_global_size(0);
   inv_A[row] = 1 / A[row*n + row];
 }
 
-kernel void convergence(global double *x0,
-                        global double *x1,
-                        global double *result,
-                        local  double *scratch)
+kernel void convergence(global %(datatype)s *x0,
+                        global %(datatype)s *x1,
+                        global %(datatype)s *result,
+                        local  %(datatype)s *scratch)
 {
   uint row = get_global_id(0);
   uint lid = get_local_id(0);
   uint lsz = get_local_size(0);
 
-  double diff = x0[row] - x1[row];
+  %(datatype)s diff = x0[row] - x1[row];
   scratch[lid] = diff*diff;
   barrier(CLK_LOCAL_MEM_FENCE);
   for (uint offset = lsz/2; offset > 0; offset/=2)
@@ -386,7 +398,7 @@ kernel void convergence(global double *x0,
   if (lid == 0)
     result[get_group_id(0)] = scratch[0];
 }
-    '''
+    ''' % config
 
     return str(result)
 
@@ -426,6 +438,7 @@ def main():
 
     # Default configuration
     config = dict()
+    config['datatype']       = 'double'
     config['wgsize']         = [64,1]
     config['unroll']         = 1
     config['layout']         = 'row-major'
