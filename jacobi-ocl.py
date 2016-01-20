@@ -281,7 +281,8 @@ def generate_kernel(config, norder, datatype):
     result = ''
 
     # Enable FP64 extension for OpenCL 1.1 devices
-    result += '\n#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n'
+    if datatype == 'double':
+        result += '\n#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n'
 
     result += '\n kernel void jacobi('
 
