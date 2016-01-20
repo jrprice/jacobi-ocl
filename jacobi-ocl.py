@@ -5,7 +5,7 @@ import numpy
 import pyopencl as CL
 import time
 
-def run(config, norder, iterations, device,
+def run(config, norder, iterations, datatype, device,
         convergence_frequency=0, convergence_tolerance=0.001):
 
     # Print configuration
@@ -13,13 +13,13 @@ def run(config, norder, iterations, device,
     print SEPARATOR
     print 'MATRIX     = %dx%d ' % (norder,norder)
     print 'ITERATIONS = %d' % iterations
+    print 'DATATYPE   = %s' % datatype
     if convergence_frequency:
         print 'Check convergence every %d iterations (tolerance=%g)' \
             % (convergence_frequency, convergence_tolerance)
     else:
         print 'Convergence checking disabled'
     print SEPARATOR
-    print 'Data-type          = ' + str(config['datatype'])
     print 'Work-group size    = ' + str(config['wgsize'])
     print 'Unroll factor      = ' + str(config['unroll'])
     print 'Data layout        = ' + config['layout']
@@ -46,10 +46,10 @@ def run(config, norder, iterations, device,
         print 'Invalid wgsize[1] value (must divide matrix order)'
         exit(1)
 
-    if config['datatype'] == 'float':
-        datatype = numpy.dtype(numpy.float32)
-    elif config['datatype'] == 'double':
-        datatype = numpy.dtype(numpy.float64)
+    if datatype == 'float':
+        dtype = numpy.dtype(numpy.float32)
+    elif datatype == 'double':
+        dtype = numpy.dtype(numpy.float64)
     else:
         print 'Invalid data-type'
         exit(1)
@@ -69,11 +69,11 @@ def run(config, norder, iterations, device,
         build_options += ' -Dnorder=' + str(norder)
         if config['integer'] == 'uint':
             build_options += 'u'
-    kernel_source  = generate_kernel(config, norder)
+    kernel_source  = generate_kernel(config, norder, datatype)
     program        = CL.Program(context, kernel_source).build(build_options)
 
     # Create buffers
-    typesize   = numpy.dtype(datatype).itemsize
+    typesize   = dtype.itemsize
     vectorsize = norder*typesize
     matrixsize = norder*norder*typesize
     d_A     = CL.Buffer(context, CL.mem_flags.READ_ONLY,  size=matrixsize)
@@ -85,11 +85,11 @@ def run(config, norder, iterations, device,
 
     # Initialize data
     numpy.random.seed(0)
-    h_A     = numpy.random.rand(norder, norder).astype(datatype)
+    h_A     = numpy.random.rand(norder, norder).astype(dtype)
     for row in range(norder):
         h_A[row][row] += numpy.sum(h_A[row])
-    h_b     = numpy.random.rand(norder).astype(datatype)
-    h_x     = numpy.zeros(norder).astype(datatype)
+    h_b     = numpy.random.rand(norder).astype(dtype)
+    h_x     = numpy.zeros(norder).astype(dtype)
     CL.enqueue_copy(queue, d_A, h_A)
     CL.enqueue_copy(queue, d_b, h_b)
     CL.enqueue_copy(queue, d_xold, h_x)
@@ -189,16 +189,13 @@ def run(config, norder, iterations, device,
     print 'Runtime = %.3gs (%d iterations)' % (runtime, i+1)
     print 'Error   = %f' % error
 
-def generate_kernel(config, norder):
-
-    if config['datatype'] != 'float' and config['datatype'] != 'double':
-        raise ValueError('datatype', 'must be \'float\' or \'double\'')
+def generate_kernel(config, norder, datatype):
 
     def gen_ptrarg(config, addrspace, name, readonly=True):
         const    = 'const' if readonly and config['use_const'] else ''
         restrict = 'restrict' if config['use_restrict'] else ''
         ptrarg   = '%-8s %-5s %s *%s %s'
-        return ptrarg % (addrspace, const, config['datatype'], restrict, name)
+        return ptrarg % (addrspace, const, datatype, restrict, name)
 
     def gen_index(config, col, row, N):
         if config['layout'] == 'row-major':
@@ -323,7 +320,7 @@ def generate_kernel(config, norder):
         col_inc = '1'
 
     # Initialise accumulator
-    result += '\n\n  %s tmp = 0.0;' % config['datatype']
+    result += '\n\n  %s tmp = 0.0;' % datatype
 
     # Loop begin
     result += '\n  for (%s col = %s; col < %s; )' % (inttype, col_beg, col_end)
@@ -398,7 +395,7 @@ kernel void convergence(global %(datatype)s *x0,
   if (lid == 0)
     result[get_group_id(0)] = scratch[0];
 }
-    ''' % config
+    ''' % {'datatype': datatype}
 
     return str(result)
 
@@ -409,6 +406,8 @@ def main():
                         type=int, default=256)
     parser.add_argument('-i', '--iterations',
                         type=int, default=1000)
+    parser.add_argument('-f', '--datatype',
+                        choices=['float', 'double'], default='double')
     parser.add_argument('-c', '--config',
                         default='')
     parser.add_argument('-k', '--convergence-frequency',
@@ -438,7 +437,6 @@ def main():
 
     # Default configuration
     config = dict()
-    config['datatype']       = 'double'
     config['wgsize']         = [64,1]
     config['unroll']         = 1
     config['layout']         = 'row-major'
@@ -462,11 +460,12 @@ def main():
             config.update(json.load(config_file))
 
     if args.print_kernel:
-        print generate_kernel(config, args.norder)
+        print generate_kernel(config, args.norder, args.datatype)
         exit(0)
 
     # Run Jacobi solver
-    run(config, args.norder, args.iterations, get_device_list()[args.device],
+    device = get_device_list()[args.device]
+    run(config, args.norder, args.iterations, args.datatype, device,
         args.convergence_frequency, args.convergence_tolerance)
 
 def get_device_list():
