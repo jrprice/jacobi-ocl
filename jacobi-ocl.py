@@ -38,7 +38,8 @@ import pyopencl as CL
 import time
 
 def run(config, norder, iterations, datatype, device,
-        convergence_frequency=0, convergence_tolerance=0.001):
+        convergence_frequency=0, convergence_tolerance=0.001,
+        tune_wgsize=False):
 
     # Print configuration
     SEPARATOR = '--------------------------------'
@@ -78,21 +79,104 @@ def run(config, norder, iterations, datatype, device,
         print 'Invalid wgsize[1] value (must divide matrix order)'
         exit(1)
 
-    if datatype == 'float':
-        dtype = numpy.dtype(numpy.float32)
-    elif datatype == 'double':
-        dtype = numpy.dtype(numpy.float64)
-    else:
-        print 'Invalid data-type'
-        exit(1)
-
-    # Initialize OpenCL objects
+    # Initialize OpenCL context
     if device:
         context = CL.Context([device])
     else:
         context = CL.create_some_context()
-    queue   = CL.CommandQueue(context)
     print 'Using \'' + context.devices[0].name + '\''
+
+    if tune_wgsize:
+        max_wgsize = device.max_work_group_size
+
+        # Snap initial wgsize to largest valid value
+        while config['wgsize'][0]*config['wgsize'][1] > max_wgsize:
+            print '%s not valid for this device - reducing' % config['wgsize']
+            if config['wgsize'][0] > 1:
+                config['wgsize'][0] /= 2
+            elif config['wgsize'][1] > 1:
+                config['wgsize'][1] /= 2
+            else:
+                print 'Invalid initial work-group size'
+                exit(1)
+
+        orig_wgsize = config['wgsize'][:]
+
+        # Collect initial runtime
+        result = run_config(config, norder, iterations, datatype, context,
+                            convergence_frequency, convergence_tolerance)
+        print '%-9s %.4gs [initial]' % (config['wgsize'], result[0])
+
+        current_result  = result
+        current_wgsize  = config['wgsize'][:]
+        previous_wgsize = current_wgsize[:]
+
+        # Function to determine if proposed wgsize is valid
+        def valid(wgsize):
+            if wgsize[0]*wgsize[1] > max_wgsize:
+                return False
+            if wgsize[0]*wgsize[1] == 0:
+                return False
+            if (norder/wgsize[0]) % config['unroll']:
+                return False
+            if wgsize[0] == previous_wgsize[0] and \
+               wgsize[1] == previous_wgsize[1]:
+                return False
+            return True
+
+        tuning = True
+        while tuning:
+            # Generate neighbour list
+            neighbours = []
+            if orig_wgsize[0] > 1:
+                wgsize = [current_wgsize[0]/2, current_wgsize[1]]
+                if valid(wgsize): neighbours.append(wgsize)
+                wgsize = [current_wgsize[0]*2, current_wgsize[1]]
+                if valid(wgsize): neighbours.append(wgsize)
+            if orig_wgsize[1] > 1:
+                wgsize = [current_wgsize[0], current_wgsize[1]/2]
+                if valid(wgsize): neighbours.append(wgsize)
+                wgsize = [current_wgsize[0], current_wgsize[1]*2]
+                if valid(wgsize): neighbours.append(wgsize)
+
+            previous_wgsize = current_wgsize[:]
+
+            # Collect results for neighbours
+            tuning = False
+            for wgsize in neighbours:
+                config['wgsize'] = wgsize[:]
+                try:
+                    result = run_config(config, norder, iterations, datatype,
+                                        context, convergence_frequency,
+                                        convergence_tolerance)
+                    print '%-9s %.4gs' % (config['wgsize'], result[0])
+                    if result[0] < current_result[0]:
+                        # Move to improved neighbour
+                        current_result = result
+                        current_wgsize = config['wgsize'][:]
+                        tuning = True
+                except:
+                    print '%-9s failed' % config['wgsize']
+
+        # Print final runtime
+        print SEPARATOR
+        print 'Final wgsize = %s' % current_wgsize
+        print 'Runtime = %.4gs (%d iterations)' % \
+            (current_result[0], current_result[2])
+        print 'Error   = %f' % current_result[1]
+
+    else:
+        result = run_config(config, norder, iterations, datatype, context,
+                            convergence_frequency, convergence_tolerance)
+
+        print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
+        print 'Error   = %f' % result[1]
+
+
+def run_config(config, norder, iterations, datatype, context,
+               convergence_frequency, convergence_tolerance):
+
+    queue   = CL.CommandQueue(context)
 
     # Create and build program
     build_options  = ''
@@ -103,6 +187,14 @@ def run(config, norder, iterations, datatype, device,
             build_options += 'u'
     kernel_source  = generate_kernel(config, norder, datatype)
     program        = CL.Program(context, kernel_source).build(build_options)
+
+    if datatype == 'float':
+        dtype = numpy.dtype(numpy.float32)
+    elif datatype == 'double':
+        dtype = numpy.dtype(numpy.float64)
+    else:
+        print 'Invalid data-type'
+        exit(1)
 
     # Create buffers
     typesize   = dtype.itemsize
@@ -218,8 +310,7 @@ def run(config, norder, iterations, datatype, device,
     # Print runtime and final error
     runtime = (end-start)
     error   = math.sqrt(sum([e*e for e in (h_b - numpy.dot(h_A, h_x))]))
-    print 'Runtime = %.4gs (%d iterations)' % (runtime, i+1)
-    print 'Error   = %f' % error
+    return (runtime,error,i+1)
 
 def generate_kernel(config, norder, datatype):
 
@@ -453,6 +544,8 @@ def main():
                         action='store_true')
     parser.add_argument('-d', '--device',
                         type=int, default=0)
+    parser.add_argument('--tune-wgsize',
+                        action='store_true')
     args = parser.parse_args()
 
     # Print device list
@@ -499,7 +592,8 @@ def main():
     # Run Jacobi solver
     device = get_device_list()[args.device]
     run(config, args.norder, args.iterations, args.datatype, device,
-        args.convergence_frequency, args.convergence_tolerance)
+        args.convergence_frequency, args.convergence_tolerance,
+        args.tune_wgsize)
 
 def get_device_list():
     platforms = CL.get_platforms()
