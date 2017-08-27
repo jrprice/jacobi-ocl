@@ -39,7 +39,7 @@ import time
 
 def run(config, norder, iterations, datatype, device,
         convergence_frequency=0, convergence_tolerance=0.001,
-        tune_wgsize=False):
+        tune_wgsize=False, max_error=0.0):
 
     # Print configuration
     SEPARATOR = '--------------------------------'
@@ -105,9 +105,13 @@ def run(config, norder, iterations, datatype, device,
         # Collect initial runtime
         result = run_config(config, norder, iterations, datatype, context,
                             convergence_frequency, convergence_tolerance)
-        print '%-9s %.4gs [initial]' % (config['wgsize'], result[0])
+        if max_error > 0 and result[1] > max_error:
+            print '%-9s error too high [initial]' % config['wgsize']
+            current_result = None
+        else:
+            print '%-9s %.4gs [initial]' % (config['wgsize'], result[0])
+            current_result  = result
 
-        current_result  = result
         current_wgsize  = config['wgsize'][:]
         previous_wgsize = current_wgsize[:]
 
@@ -149,8 +153,10 @@ def run(config, norder, iterations, datatype, device,
                     result = run_config(config, norder, iterations, datatype,
                                         context, convergence_frequency,
                                         convergence_tolerance)
+                    if max_error > 0 and result[1] > max_error:
+                        raise 'Error threshold exceeded'
                     print '%-9s %.4gs' % (config['wgsize'], result[0])
-                    if result[0] < current_result[0]:
+                    if not current_result or result[0] < current_result[0]:
                         # Move to improved neighbour
                         current_result = result
                         current_wgsize = config['wgsize'][:]
@@ -160,10 +166,15 @@ def run(config, norder, iterations, datatype, device,
 
         # Print final runtime
         print SEPARATOR
-        print 'Final wgsize = %s' % current_wgsize
-        print 'Runtime = %.4gs (%d iterations)' % \
-            (current_result[0], current_result[2])
-        print 'Error   = %f' % current_result[1]
+        if not current_result or \
+           (max_error > 0 and current_result[1] > max_error):
+            print 'No valid configuration found'
+            exit(1)
+        else:
+            print 'Final wgsize = %s' % current_wgsize
+            print 'Runtime = %.4gs (%d iterations)' % \
+                (current_result[0], current_result[2])
+            print 'Error   = %f' % current_result[1]
 
     else:
         result = run_config(config, norder, iterations, datatype, context,
@@ -171,6 +182,9 @@ def run(config, norder, iterations, datatype, device,
 
         print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
         print 'Error   = %f' % result[1]
+        if max_error > 0 and result[1] > max_error:
+            print 'Error exceeds maximum allowed'
+            exit(1)
 
 
 def run_config(config, norder, iterations, datatype, context,
@@ -546,6 +560,8 @@ def main():
                         type=int, default=0)
     parser.add_argument('--tune-wgsize',
                         action='store_true')
+    parser.add_argument('--max-error',
+                        type=float, default=0)
     args = parser.parse_args()
 
     # Print device list
@@ -593,7 +609,7 @@ def main():
     device = get_device_list()[args.device]
     run(config, args.norder, args.iterations, args.datatype, device,
         args.convergence_frequency, args.convergence_tolerance,
-        args.tune_wgsize)
+        args.tune_wgsize, args.max_error)
 
 def get_device_list():
     platforms = CL.get_platforms()
