@@ -35,11 +35,23 @@ import json
 import math
 import numpy
 import pyopencl as CL
+import signal
 import time
+
+class timeout:
+    def __init__(self, seconds=1):
+        self.seconds = seconds
+    def handle_timeout(self, signum, frame):
+        raise Exception('timeout')
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self.handle_timeout)
+        signal.alarm(self.seconds)
+    def __exit__(self, type, value, traceback):
+        signal.alarm(0)
 
 def run(config, norder, iterations, datatype, device,
         convergence_frequency=0, convergence_tolerance=0.001,
-        tune_wgsize=False, max_error=0.0):
+        tune_wgsize=False, max_error=0.0, max_runtime=0.0):
 
     # Print configuration
     SEPARATOR = '--------------------------------'
@@ -103,14 +115,18 @@ def run(config, norder, iterations, datatype, device,
         orig_wgsize = config['wgsize'][:]
 
         # Collect initial runtime
-        result = run_config(config, norder, iterations, datatype, context,
-                            convergence_frequency, convergence_tolerance)
-        if max_error > 0 and result[1] > max_error:
-            print '%-9s error too high [initial]' % config['wgsize']
-            current_result = None
-        else:
+        try:
+            with timeout(max_runtime):
+                result = run_config(config, norder, iterations, datatype,
+                                    context, convergence_frequency,
+                                    convergence_tolerance)
+            if max_error > 0 and result[1] > max_error:
+                raise Exception('error too high')
             print '%-9s %.4gs [initial]' % (config['wgsize'], result[0])
             current_result  = result
+        except Exception as e:
+            print '%-9s %s [initial]' % (config['wgsize'], str(e))
+            current_result = None
 
         current_wgsize  = config['wgsize'][:]
         previous_wgsize = current_wgsize[:]
@@ -150,19 +166,21 @@ def run(config, norder, iterations, datatype, device,
             for wgsize in neighbours:
                 config['wgsize'] = wgsize[:]
                 try:
-                    result = run_config(config, norder, iterations, datatype,
-                                        context, convergence_frequency,
-                                        convergence_tolerance)
-                    if max_error > 0 and result[1] > max_error:
-                        raise 'Error threshold exceeded'
-                    print '%-9s %.4gs' % (config['wgsize'], result[0])
-                    if not current_result or result[0] < current_result[0]:
-                        # Move to improved neighbour
-                        current_result = result
-                        current_wgsize = config['wgsize'][:]
-                        tuning = True
-                except:
-                    print '%-9s failed' % config['wgsize']
+                    with timeout(max_runtime):
+                        result = run_config(config, norder, iterations,
+                                            datatype, context,
+                                            convergence_frequency,
+                                            convergence_tolerance)
+                        if max_error > 0 and result[1] > max_error:
+                            raise Exception('error too high')
+                        print '%-9s %.4gs' % (config['wgsize'], result[0])
+                        if not current_result or result[0] < current_result[0]:
+                            # Move to improved neighbour
+                            current_result = result
+                            current_wgsize = config['wgsize'][:]
+                            tuning = True
+                except Exception as e:
+                    print '%-9s %s' % (config['wgsize'], str(e))
 
         # Print final runtime
         print SEPARATOR
@@ -177,14 +195,18 @@ def run(config, norder, iterations, datatype, device,
             print 'Error   = %f' % current_result[1]
 
     else:
-        result = run_config(config, norder, iterations, datatype, context,
-                            convergence_frequency, convergence_tolerance)
-
-        print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
-        print 'Error   = %f' % result[1]
-        if max_error > 0 and result[1] > max_error:
-            print 'Error exceeds maximum allowed'
-            exit(1)
+        try:
+            with timeout(max_runtime):
+                result = run_config(config, norder, iterations, datatype,
+                                    context, convergence_frequency,
+                                    convergence_tolerance)
+                print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
+                print 'Error   = %f' % result[1]
+                if max_error > 0 and result[1] > max_error:
+                    raise 'error too high'
+        except Exception as e:
+            print 'Error: %s' % str(e)
+            exit (1)
 
 
 def run_config(config, norder, iterations, datatype, context,
@@ -562,6 +584,8 @@ def main():
                         action='store_true')
     parser.add_argument('--max-error',
                         type=float, default=0)
+    parser.add_argument('--max-runtime',
+                        type=int, default=3600)
     args = parser.parse_args()
 
     # Print device list
@@ -609,7 +633,7 @@ def main():
     device = get_device_list()[args.device]
     run(config, args.norder, args.iterations, args.datatype, device,
         args.convergence_frequency, args.convergence_tolerance,
-        args.tune_wgsize, args.max_error)
+        args.tune_wgsize, args.max_error, args.max_runtime)
 
 def get_device_list():
     platforms = CL.get_platforms()
