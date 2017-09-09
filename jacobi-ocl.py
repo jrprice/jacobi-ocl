@@ -91,7 +91,7 @@ class Tuner:
                                 self.datatype, self.context, self.max_runtime,
                                 0, 0)
 
-            if not result[1] < self.max_error:
+            if self.max_error > 0 and not result[1] < self.max_error:
                 raise Exception('verification failed')
 
             print '%-16s : %.4gs' % (wgsize_config, result[0])
@@ -280,7 +280,7 @@ def run(config, norder, iterations, datatype, device,
         tuner = Tuner(config, norder, datatype, context, max_error, max_runtime)
 
         # Run uniform search with small number of iterations
-        tuner.max_error = 10000
+        tuner.max_error = 0
         short_iterations = max(iterations/100, 1)
         tuner.uniform_search(100, short_iterations)
         best = tuner.best
