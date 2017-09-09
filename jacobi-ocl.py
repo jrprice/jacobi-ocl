@@ -88,7 +88,7 @@ class Tuner:
                 max_runtime = int(self.best[1]) + 2
 
             result = run_config(self.config, self.norder, iterations,
-                                self.datatype, self.context, self.max_runtime,
+                                self.datatype, self.context, max_runtime,
                                 0, 0)
 
             if self.max_error > 0 and not result[1] < self.max_error:
