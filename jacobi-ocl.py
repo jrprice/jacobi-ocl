@@ -49,6 +49,171 @@ class timeout:
     def __exit__(self, type, value, traceback):
         signal.alarm(0)
 
+class Tuner:
+    def __init__(self, config, norder, datatype, context,
+                 max_error, max_runtime):
+        self.norder = norder
+        self.datatype = datatype
+        self.context = context
+        self.max_error = max_error
+        self.max_runtime = max_runtime
+
+        device = context.devices[0]
+        self.max_wgsize = device.max_work_group_size
+
+        config['use_wgsize_x'] = config['wgsize'][0] > 1
+        config['use_wgsize_y'] = config['wgsize'][1] > 1
+        self.config = config
+
+        self.best = None
+        self.results = dict()
+
+    # Evaluate a configuration and return the runtime
+    def evaluate(self, wgsize_config, iterations):
+        self.config['wgsize']   = wgsize_config[:]
+        try:
+            if wgsize_config in self.results:
+                result = self.results[wgsize_config]
+                if result:
+                    print '%-16s : %.4gs [cached]' % (wgsize_config, result)
+                else:
+                    print '%-16s : failed [cached]' % (wgsize_config,)
+                return result
+
+            max_runtime = self.max_runtime
+            if self.best:
+                max_runtime = int(self.best[1]) + 2
+
+            result = run_config(self.config, self.norder, iterations,
+                                self.datatype, self.context, self.max_runtime,
+                                0, 0)
+
+            if not result[1] < self.max_error:
+                raise Exception('verification failed')
+
+            print '%-16s : %.4gs' % (wgsize_config, result[0])
+
+            if not self.best or result[0] < self.best[1]:
+                self.best = (wgsize_config, result[0], result[1], result[2])
+
+            self.results[wgsize_config] = result[0]
+            return result[0]
+        except Exception as e:
+            print '%-16s : %s' % (wgsize_config, str(e))
+            self.results[wgsize_config] = None
+            return None
+
+    # Run a steepest ascent hill climber starting at seed
+    def local_search(self, seed, iterations):
+        print 'Performing local search starting at %s' % (seed,)
+
+        current = seed
+        current_runtime = self.evaluate(seed, iterations)
+
+        itr = 0
+        tuning = True
+        while tuning:
+            # Generate neighbour list
+            neighbours = []
+
+            if self.config['use_wgsize_x']:
+                tc = (current[0]/2, current[1])
+                if self.valid(tc): neighbours.append(tc)
+                tc = (current[0]*2, current[1])
+                if self.valid(tc): neighbours.append(tc)
+            if self.config['use_wgsize_y']:
+                tc = (current[0], current[1]/2)
+                if self.valid(tc): neighbours.append(tc)
+                tc = (current[0], current[1]*2)
+                if self.valid(tc): neighbours.append(tc)
+
+            tuning = False
+
+            # Evaluate neighbours
+            for cfg in neighbours:
+                runtime = self.evaluate(cfg, iterations)
+                if not runtime:
+                    continue
+                if not current_runtime or runtime < current_runtime:
+                    # Move to improved neighbour
+                    current = cfg
+                    current_runtime = runtime
+                    tuning = True
+
+            if current_runtime:
+                print 'Iteration %d: %.4gs %s' % (itr, current_runtime, current)
+            else:
+                print 'Iteration %d: -' % itr
+            itr += 1
+
+    # Reset the record of results tried and best so far
+    def reset(self):
+        self.best = None
+        self.results = dict()
+
+    # Select k evenly spaced elements from l
+    def select_uniform(self, l, k):
+        n = len(l)
+        indices = (int(round(i*(n/float(k)))) for i in range(k))
+        return [l[i] for i in indices]
+
+    # Check if a wgsize configuration is sensible for the target device
+    def sensible(self, wgsize_config):
+        device   = self.context.devices[0]
+        wgsize   = wgsize_config[0] * wgsize_config[1]
+        groups   = (self.norder*self.norder)/wgsize
+
+        if device.type == CL.device_type.GPU:
+            # Ensure work-groups are not too small
+            if wgsize < 16:
+                return False
+
+        # Make sure there are enough groups to fill at least half of the device
+        if groups < device.max_compute_units / 2:
+            return False
+
+        return True
+
+    # Evaluate num_tests uniformly generated wgsize configurations
+    def uniform_search(self, num_tests, iterations):
+        print 'Performing uniform search with %d configurations' % num_tests
+
+        # Generate list of all valid and sensible wgsize configurations
+        wgsize_configs = []
+        for wgx in [2**i for i in range(11)]:
+            for wgy in [2**i for i in range(11)]:
+                cfg = (wgx, wgy)
+                if self.valid(cfg) and self.sensible(cfg):
+                    wgsize_configs.append(cfg)
+        print '(%s configurations available)' % len(wgsize_configs)
+
+        # Select num_tests evenly spaced wgsize configurations
+        if len(wgsize_configs) > num_tests:
+            wgsize_configs = self.select_uniform(wgsize_configs, num_tests)
+
+        # Evaluate wgsize configurations
+        for cfg in wgsize_configs:
+            self.evaluate(cfg, iterations)
+
+    # Check whether a wgsize configuration is valid or not
+    def valid(self, wgsize_config):
+        if 0 in wgsize_config:
+            return False
+        if (wgsize_config[0]*wgsize_config[1]) > self.max_wgsize:
+            return False
+        if self.norder % wgsize_config[0]:
+            return False
+        if self.norder % wgsize_config[1]:
+            return False
+        if (self.norder / wgsize_config[0]) % self.config['unroll']:
+            return False
+        if not self.config['use_wgsize_x'] and wgsize_config[0] > 1:
+            return False
+        if not self.config['use_wgsize_y'] and wgsize_config[1] > 1:
+            return False
+
+        return True
+
 def run(config, norder, iterations, datatype, device,
         convergence_frequency=0, convergence_tolerance=0.001,
         tune_wgsize=False, max_error=0.0, max_runtime=0.0):
@@ -83,14 +248,6 @@ def run(config, norder, iterations, datatype, device,
     print 'Coalesce columns   = ' + str(config['coalesce_cols'])
     print SEPARATOR
 
-    # Ensure work-group size is valid
-    if config['wgsize'][0] & (config['wgsize'][0]-1):
-        print 'Invalid wgsize[0] value (must be power of two)'
-        exit(1)
-    if norder % config['wgsize'][1]:
-        print 'Invalid wgsize[1] value (must divide matrix order)'
-        exit(1)
-
     # Initialize OpenCL context
     if device:
         context = CL.Context([device])
@@ -99,118 +256,54 @@ def run(config, norder, iterations, datatype, device,
     print 'Using \'' + context.devices[0].name + '\''
 
     if tune_wgsize:
-        max_wgsize = device.max_work_group_size
+        tuner = Tuner(config, norder, datatype, context, max_error, max_runtime)
 
-        # Snap initial wgsize to largest valid value
-        while config['wgsize'][0]*config['wgsize'][1] > max_wgsize:
-            print '%s not valid for this device - reducing' % config['wgsize']
-            if config['wgsize'][0] > 1:
-                config['wgsize'][0] /= 2
-            elif config['wgsize'][1] > 1:
-                config['wgsize'][1] /= 2
-            else:
-                print 'Invalid initial work-group size'
-                exit(1)
-
-        orig_wgsize = config['wgsize'][:]
-
-        # Collect initial runtime
-        try:
-            with timeout(max_runtime):
-                result = run_config(config, norder, iterations, datatype,
-                                    context, convergence_frequency,
-                                    convergence_tolerance)
-            if max_error > 0 and result[1] > max_error:
-                raise Exception('error too high')
-            print '%-9s %.4gs [initial]' % (config['wgsize'], result[0])
-            current_result  = result
-        except Exception as e:
-            print '%-9s %s [initial]' % (config['wgsize'], str(e))
-            current_result = None
-
-        current_wgsize  = config['wgsize'][:]
-        previous_wgsize = current_wgsize[:]
-
-        # Function to determine if proposed wgsize is valid
-        def valid(wgsize):
-            if wgsize[0]*wgsize[1] > max_wgsize:
-                return False
-            if wgsize[0]*wgsize[1] == 0:
-                return False
-            if (norder/wgsize[0]) % config['unroll']:
-                return False
-            if wgsize[0] == previous_wgsize[0] and \
-               wgsize[1] == previous_wgsize[1]:
-                return False
-            return True
-
-        tuning = True
-        while tuning:
-            # Generate neighbour list
-            neighbours = []
-            if orig_wgsize[0] > 1:
-                wgsize = [current_wgsize[0]/2, current_wgsize[1]]
-                if valid(wgsize): neighbours.append(wgsize)
-                wgsize = [current_wgsize[0]*2, current_wgsize[1]]
-                if valid(wgsize): neighbours.append(wgsize)
-            if orig_wgsize[1] > 1:
-                wgsize = [current_wgsize[0], current_wgsize[1]/2]
-                if valid(wgsize): neighbours.append(wgsize)
-                wgsize = [current_wgsize[0], current_wgsize[1]*2]
-                if valid(wgsize): neighbours.append(wgsize)
-
-            previous_wgsize = current_wgsize[:]
-
-            # Collect results for neighbours
-            tuning = False
-            for wgsize in neighbours:
-                config['wgsize'] = wgsize[:]
-                try:
-                    with timeout(max_runtime):
-                        result = run_config(config, norder, iterations,
-                                            datatype, context,
-                                            convergence_frequency,
-                                            convergence_tolerance)
-                        if max_error > 0 and result[1] > max_error:
-                            raise Exception('error too high')
-                        print '%-9s %.4gs' % (config['wgsize'], result[0])
-                        if not current_result or result[0] < current_result[0]:
-                            # Move to improved neighbour
-                            current_result = result
-                            current_wgsize = config['wgsize'][:]
-                            tuning = True
-                except Exception as e:
-                    print '%-9s %s' % (config['wgsize'], str(e))
-
-        # Print final runtime
-        print SEPARATOR
-        if not current_result or \
-           (max_error > 0 and current_result[1] > max_error):
+        # Run uniform search with small number of iterations
+        tuner.max_error = 10000
+        short_iterations = max(iterations/100, 1)
+        tuner.uniform_search(100, short_iterations)
+        best = tuner.best
+        if not best:
             print 'No valid configuration found'
             exit(1)
-        else:
-            print 'Final wgsize = %s' % current_wgsize
-            print 'Runtime = %.4gs (%d iterations)' % \
-                (current_result[0], current_result[2])
-            print 'Error   = %f' % current_result[1]
+        print 'Best work-group size = %s' % (best[0],)
+        print 'Best runtime = %.4gs (%d iterations)' % (best[1], best[3])
+        print SEPARATOR
 
+        # Run local search around best result, at full iteration count
+        tuner.reset()
+        tuner.max_error = max_error
+        tuner.local_search(best[0], iterations)
+        print SEPARATOR
+        best = tuner.best
+        if not best:
+            print 'No valid configuration found'
+            exit(1)
+        print 'Best work-group size = %s' % (best[0],)
+        print 'Runtime = %.4gs (%d iterations)' % (best[1], best[3])
+        print 'Error   = %f' % best[2]
     else:
         try:
-            with timeout(max_runtime):
-                result = run_config(config, norder, iterations, datatype,
-                                    context, convergence_frequency,
-                                    convergence_tolerance)
-                print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
-                print 'Error   = %f' % result[1]
-                if max_error > 0 and result[1] > max_error:
-                    raise 'error too high'
+            result = run_config(config, norder, iterations, datatype,
+                                context, max_runtime, convergence_frequency,
+                                convergence_tolerance)
+            print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
+            print 'Error   = %f' % result[1]
+            if max_error > 0 and not result[1] < max_error:
+                raise 'error too high'
         except Exception as e:
             print 'Error: %s' % str(e)
             exit (1)
 
 
-def run_config(config, norder, iterations, datatype, context,
+def run_config(config, norder, iterations, datatype, context, max_runtime,
                convergence_frequency, convergence_tolerance):
+
+    # Ensure work-group size is valid
+    if config['wgsize'][0] & (config['wgsize'][0]-1):
+        raise ValueError('Invalid wgsize[0] value (must be power of two)')
+    if norder % config['wgsize'][1]:
+        raise ValueError('Invalid wgsize[1] value (must divide matrix order)')
 
     queue   = CL.CommandQueue(context)
 
@@ -293,52 +386,52 @@ def run_config(config, norder, iterations, datatype, context,
     convergence.set_arg(2, d_err)
     convergence.set_arg(3, CL.LocalMemory(conv_wgsize*typesize))
 
+    with timeout(max_runtime):
+        # Start timing
+        queue.finish()
+        start = time.time()
 
-    # Start timing
-    queue.finish()
-    start = time.time()
+        if config['layout'] == 'col-major':
+            # Run kernel to transpose data on device
+            d_A_colmaj = CL.Buffer(context, CL.mem_flags.READ_WRITE,
+                                   size=matrixsize)
+            transpose.set_arg(0, d_A)
+            transpose.set_arg(1, d_A_colmaj)
+            CL.enqueue_nd_range_kernel(queue, transpose, (norder,norder), None)
+            d_A = d_A_colmaj
 
-    if config['layout'] == 'col-major':
-        # Run kernel to transpose data on device
-        d_A_colmaj = CL.Buffer(context, CL.mem_flags.READ_WRITE,
-                               size=matrixsize)
-        transpose.set_arg(0, d_A)
-        transpose.set_arg(1, d_A_colmaj)
-        CL.enqueue_nd_range_kernel(queue, transpose, (norder,norder), None)
-        d_A = d_A_colmaj
+        if config['divide_A'] in ['precompute-global','precompute-constant']:
+            # Run kernel to precompute 1/A for diagonal
+            d_inv_A = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=vectorsize)
+            precompute_inv_A.set_arg(0, d_A)
+            precompute_inv_A.set_arg(1, d_inv_A)
+            CL.enqueue_nd_range_kernel(queue, precompute_inv_A, (norder,), None)
+            jacobi.set_arg(arg_index, d_inv_A)
+            arg_index += 1
 
-    if config['divide_A'] in ['precompute-global','precompute-constant']:
-        # Run kernel to precompute 1/A for diagonal
-        d_inv_A = CL.Buffer(context, CL.mem_flags.READ_WRITE, size=vectorsize)
-        precompute_inv_A.set_arg(0, d_A)
-        precompute_inv_A.set_arg(1, d_inv_A)
-        CL.enqueue_nd_range_kernel(queue, precompute_inv_A, (norder,), None)
-        jacobi.set_arg(arg_index, d_inv_A)
-        arg_index += 1
+        jacobi.set_arg(arg_A, d_A)
+        jacobi.set_arg(arg_b, d_b)
 
-    jacobi.set_arg(arg_A, d_A)
-    jacobi.set_arg(arg_b, d_b)
+        # Run Jacobi solver
+        for i in range(iterations):
+            jacobi.set_arg(arg_xold, d_xold)
+            jacobi.set_arg(arg_xnew, d_xnew)
+            CL.enqueue_nd_range_kernel(queue, jacobi, global_size, local_size)
 
-    # Run Jacobi solver
-    for i in range(iterations):
-        jacobi.set_arg(arg_xold, d_xold)
-        jacobi.set_arg(arg_xnew, d_xnew)
-        CL.enqueue_nd_range_kernel(queue, jacobi, global_size, local_size)
+            # Convergence check
+            if convergence_frequency and (i+1)%convergence_frequency == 0:
+                CL.enqueue_nd_range_kernel(queue, convergence,
+                                           (norder,), (conv_wgsize,))
+                CL.enqueue_copy(queue, h_err, d_err)
+                queue.finish()
+                if math.sqrt(numpy.sum(h_err)) < convergence_tolerance:
+                    break
 
-        # Convergence check
-        if convergence_frequency and (i+1)%convergence_frequency == 0:
-            CL.enqueue_nd_range_kernel(queue, convergence,
-                                       (norder,), (conv_wgsize,))
-            CL.enqueue_copy(queue, h_err, d_err)
-            queue.finish()
-            if math.sqrt(numpy.sum(h_err)) < convergence_tolerance:
-                break
+            d_xold,d_xnew = d_xnew,d_xold
 
-        d_xold,d_xnew = d_xnew,d_xold
-
-    # Stop timing
-    queue.finish()
-    end = time.time()
+        # Stop timing
+        queue.finish()
+        end = time.time()
 
     # Read results
     CL.enqueue_copy(queue, h_x, d_xold)
