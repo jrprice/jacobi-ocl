@@ -38,6 +38,9 @@ import pyopencl as CL
 import signal
 import time
 
+h_A = None
+h_b = None
+
 class timeout:
     def __init__(self, seconds=1):
         self.seconds = seconds
@@ -218,6 +221,9 @@ def run(config, norder, iterations, datatype, device,
         convergence_frequency=0, convergence_tolerance=0.001,
         tune_wgsize=False, max_error=0.0, max_runtime=0.0):
 
+    global h_A
+    global h_b
+
     # Print configuration
     SEPARATOR = '--------------------------------'
     print SEPARATOR
@@ -247,6 +253,21 @@ def run(config, norder, iterations, datatype, device,
     print 'Constant wgsize    = ' + str(config['const_wgsize'])
     print 'Coalesce columns   = ' + str(config['coalesce_cols'])
     print SEPARATOR
+
+    if datatype == 'float':
+        dtype = numpy.dtype(numpy.float32)
+    elif datatype == 'double':
+        dtype = numpy.dtype(numpy.float64)
+    else:
+        print 'Invalid data-type'
+        exit(1)
+
+    # Initialize input data
+    numpy.random.seed(0)
+    h_A     = numpy.random.rand(norder, norder).astype(dtype)
+    for row in range(norder):
+        h_A[row][row] += numpy.sum(h_A[row])
+    h_b     = numpy.random.rand(norder).astype(dtype)
 
     # Initialize OpenCL context
     if device:
@@ -299,6 +320,9 @@ def run(config, norder, iterations, datatype, device,
 def run_config(config, norder, iterations, datatype, context, max_runtime,
                convergence_frequency, convergence_tolerance):
 
+    global h_A
+    global h_b
+
     # Ensure work-group size is valid
     if config['wgsize'][0] & (config['wgsize'][0]-1):
         raise ValueError('Invalid wgsize[0] value (must be power of two)')
@@ -337,12 +361,7 @@ def run_config(config, norder, iterations, datatype, context, max_runtime,
     d_xnew  = d_x1
 
     # Initialize data
-    numpy.random.seed(0)
-    h_A     = numpy.random.rand(norder, norder).astype(dtype)
-    for row in range(norder):
-        h_A[row][row] += numpy.sum(h_A[row])
-    h_b     = numpy.random.rand(norder).astype(dtype)
-    h_x     = numpy.zeros(norder).astype(dtype)
+    h_x     = numpy.zeros(norder, dtype)
     CL.enqueue_copy(queue, d_A, h_A)
     CL.enqueue_copy(queue, d_b, h_b)
     CL.enqueue_copy(queue, d_xold, h_x)
