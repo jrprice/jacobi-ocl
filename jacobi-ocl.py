@@ -29,6 +29,7 @@
 # LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
+from __future__ import print_function
 
 import argparse
 import json
@@ -78,9 +79,9 @@ class Tuner:
             if wgsize_config in self.results:
                 result = self.results[wgsize_config]
                 if result:
-                    print '%-16s : %.4gs [cached]' % (wgsize_config, result)
+                    print('%-16s : %.4gs [cached]' % (wgsize_config, result))
                 else:
-                    print '%-16s : failed [cached]' % (wgsize_config,)
+                    print('%-16s : failed [cached]' % (wgsize_config,))
                 return result
 
             max_runtime = self.max_runtime
@@ -94,7 +95,7 @@ class Tuner:
             if self.max_error > 0 and not result[1] < self.max_error:
                 raise Exception('verification failed')
 
-            print '%-16s : %.4gs' % (wgsize_config, result[0])
+            print('%-16s : %.4gs' % (wgsize_config, result[0]))
 
             if not self.best or result[0] < self.best[1]:
                 self.best = (wgsize_config, result[0], result[1], result[2])
@@ -102,13 +103,13 @@ class Tuner:
             self.results[wgsize_config] = result[0]
             return result[0]
         except Exception as e:
-            print '%-16s : %s' % (wgsize_config, str(e))
+            print('%-16s : %s' % (wgsize_config, str(e)))
             self.results[wgsize_config] = None
             return None
 
     # Run a steepest ascent hill climber starting at seed
     def local_search(self, seed, iterations):
-        print 'Performing local search starting at %s' % (seed,)
+        print('Performing local search starting at %s' % (seed,))
 
         current = seed
         current_runtime = self.evaluate(seed, iterations)
@@ -144,9 +145,9 @@ class Tuner:
                     tuning = True
 
             if current_runtime:
-                print 'Iteration %d: %.4gs %s' % (itr, current_runtime, current)
+                print('Iteration %d: %.4gs %s' % (itr, current_runtime, current))
             else:
-                print 'Iteration %d: -' % itr
+                print('Iteration %d: -' % itr)
             itr += 1
 
     # Reset the record of results tried and best so far
@@ -179,7 +180,7 @@ class Tuner:
 
     # Evaluate num_tests uniformly generated wgsize configurations
     def uniform_search(self, num_tests, iterations):
-        print 'Performing uniform search with %d configurations' % num_tests
+        print('Performing uniform search with %d configurations' % num_tests)
 
         # Generate list of all valid and sensible wgsize configurations
         wgsize_configs = []
@@ -188,7 +189,7 @@ class Tuner:
                 cfg = (wgx, wgy)
                 if self.valid(cfg) and self.sensible(cfg):
                     wgsize_configs.append(cfg)
-        print '(%s configurations available)' % len(wgsize_configs)
+        print('(%s configurations available)' % len(wgsize_configs))
 
         # Select num_tests evenly spaced wgsize configurations
         if len(wgsize_configs) > num_tests:
@@ -226,40 +227,40 @@ def run(config, norder, iterations, datatype, device,
 
     # Print configuration
     SEPARATOR = '--------------------------------'
-    print SEPARATOR
-    print 'MATRIX     = %dx%d ' % (norder,norder)
-    print 'ITERATIONS = %d' % iterations
-    print 'DATATYPE   = %s' % datatype
+    print(SEPARATOR)
+    print('MATRIX     = %dx%d ' % (norder,norder))
+    print('ITERATIONS = %d' % iterations)
+    print('DATATYPE   = %s' % datatype)
     if convergence_frequency:
-        print 'Check convergence every %d iterations (tolerance=%g)' \
-            % (convergence_frequency, convergence_tolerance)
+        print('Check convergence every %d iterations (tolerance=%g)'
+              % (convergence_frequency, convergence_tolerance))
     else:
-        print 'Convergence checking disabled'
-    print SEPARATOR
-    print 'Work-group size    = ' + str(config['wgsize'])
-    print 'Unroll factor      = ' + str(config['unroll'])
-    print 'Data layout        = ' + config['layout']
-    print 'Conditional        = ' + config['conditional']
-    print 'fmad               = ' + config['fmad']
-    print 'Divide by A        = ' + config['divide_A']
-    print 'b address space    = ' + config['addrspace_b']
-    print 'xold address space = ' + config['addrspace_xold']
-    print 'Integer type       = ' + config['integer']
-    print 'Relaxed math       = ' + str(config['relaxed_math'])
-    print 'Use restrict       = ' + str(config['use_restrict'])
-    print 'Use const pointers = ' + str(config['use_const'])
-    print 'Use mad24          = ' + str(config['use_mad24'])
-    print 'Constant norder    = ' + str(config['const_norder'])
-    print 'Constant wgsize    = ' + str(config['const_wgsize'])
-    print 'Coalesce columns   = ' + str(config['coalesce_cols'])
-    print SEPARATOR
+        print('Convergence checking disabled')
+    print(SEPARATOR)
+    print('Work-group size    = ' + str(config['wgsize']))
+    print('Unroll factor      = ' + str(config['unroll']))
+    print('Data layout        = ' + config['layout'])
+    print('Conditional        = ' + config['conditional'])
+    print('fmad               = ' + config['fmad'])
+    print('Divide by A        = ' + config['divide_A'])
+    print('b address space    = ' + config['addrspace_b'])
+    print('xold address space = ' + config['addrspace_xold'])
+    print('Integer type       = ' + config['integer'])
+    print('Relaxed math       = ' + str(config['relaxed_math']))
+    print('Use restrict       = ' + str(config['use_restrict']))
+    print('Use const pointers = ' + str(config['use_const']))
+    print('Use mad24          = ' + str(config['use_mad24']))
+    print('Constant norder    = ' + str(config['const_norder']))
+    print('Constant wgsize    = ' + str(config['const_wgsize']))
+    print('Coalesce columns   = ' + str(config['coalesce_cols']))
+    print(SEPARATOR)
 
     if datatype == 'float':
         dtype = numpy.dtype(numpy.float32)
     elif datatype == 'double':
         dtype = numpy.dtype(numpy.float64)
     else:
-        print 'Invalid data-type'
+        print('Invalid data-type')
         exit(1)
 
     # Initialize input data
@@ -274,7 +275,7 @@ def run(config, norder, iterations, datatype, device,
         context = CL.Context([device])
     else:
         context = CL.create_some_context()
-    print 'Using \'' + context.devices[0].name + '\''
+    print('Using \'' + context.devices[0].name + '\'')
 
     if tune_wgsize:
         tuner = Tuner(config, norder, datatype, context, max_error, max_runtime)
@@ -285,35 +286,35 @@ def run(config, norder, iterations, datatype, device,
         tuner.uniform_search(100, short_iterations)
         best = tuner.best
         if not best:
-            print 'No valid configuration found'
+            print('No valid configuration found')
             exit(1)
-        print 'Best work-group size = %s' % (best[0],)
-        print 'Best runtime = %.4gs (%d iterations)' % (best[1], best[3])
-        print SEPARATOR
+        print('Best work-group size = %s' % (best[0],))
+        print('Best runtime = %.4gs (%d iterations)' % (best[1], best[3]))
+        print(SEPARATOR)
 
         # Run local search around best result, at full iteration count
         tuner.reset()
         tuner.max_error = max_error
         tuner.local_search(best[0], iterations)
-        print SEPARATOR
+        print(SEPARATOR)
         best = tuner.best
         if not best:
-            print 'No valid configuration found'
+            print('No valid configuration found')
             exit(1)
-        print 'Best work-group size = %s' % (best[0],)
-        print 'Runtime = %.4gs (%d iterations)' % (best[1], best[3])
-        print 'Error   = %f' % best[2]
+        print('Best work-group size = %s' % (best[0],))
+        print('Runtime = %.4gs (%d iterations)' % (best[1], best[3]))
+        print('Error   = %f' % best[2])
     else:
         try:
             result = run_config(config, norder, iterations, datatype,
                                 context, max_runtime, convergence_frequency,
                                 convergence_tolerance)
-            print 'Runtime = %.4gs (%d iterations)' % (result[0], result[2])
-            print 'Error   = %f' % result[1]
+            print('Runtime = %.4gs (%d iterations)' % (result[0], result[2]))
+            print('Error   = %f' % result[1])
             if max_error > 0 and not result[1] < max_error:
                 raise 'error too high'
         except Exception as e:
-            print 'Error: %s' % str(e)
+            print('Error: %s' % str(e))
             exit (1)
 
 
@@ -346,7 +347,7 @@ def run_config(config, norder, iterations, datatype, context, max_runtime,
     elif datatype == 'double':
         dtype = numpy.dtype(numpy.float64)
     else:
-        print 'Invalid data-type'
+        print('Invalid data-type')
         exit(1)
 
     # Create buffers
@@ -532,7 +533,7 @@ def generate_kernel(config, norder, datatype):
     # Ensure unroll factor is valid
     cols_per_wi = norder / config['wgsize'][0]
     if cols_per_wi % config['unroll']:
-        print 'Invalid unroll factor (must exactly divide %d)' % cols_per_wi
+        print('Invalid unroll factor (must exactly divide %d)' % cols_per_wi)
         exit(1)
 
     row  = 'get_global_id(1)'
@@ -705,12 +706,12 @@ def main():
         devices = get_device_list()
         if devices:
             print
-            print 'OpenCL devices:'
+            print('OpenCL devices:')
             for i in range(len(devices)):
-                print '  %d: %s' % (i,devices[i].name)
+                print('  %d: %s' % (i,devices[i].name))
             print
         else:
-            print 'No OpenCL devices found'
+            print('No OpenCL devices found')
         exit(0)
 
     # Default configuration
@@ -738,7 +739,7 @@ def main():
             config.update(json.load(config_file))
 
     if args.print_kernel:
-        print generate_kernel(config, args.norder, args.datatype)
+        print(generate_kernel(config, args.norder, args.datatype))
         exit(0)
 
     # Run Jacobi solver
