@@ -29,6 +29,7 @@
 # LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
+from __future__ import division
 from __future__ import print_function
 
 import argparse
@@ -397,7 +398,7 @@ def run_config(config, norder, iterations, datatype, context, max_runtime,
 
     # Prepare convergence checking kernel
     conv_wgsize = 64 # TODO: Pick something else? (e.g wgsize[0]*wgsize[1])
-    num_groups  = norder / conv_wgsize
+    num_groups  = norder // conv_wgsize
     h_err       = numpy.zeros(num_groups)
     d_err       = CL.Buffer(context, CL.mem_flags.WRITE_ONLY,
                             size=num_groups*typesize)
